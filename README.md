@@ -1,6 +1,6 @@
 SnapRoute ASIC Daemon
 =======
-![alt text](https://github.com/vragukumar/asicdopen/blob/master/Asic%20daemon.jpg "High level architecture diagram")
+![alt text](https://github.com/SnapRoute/asicdopen/blob/master/Asic%20daemon.jpg "High level architecture diagram")
 
 ##Overview
 Snaproute's asic daemon serves as a hardware abstraction layer (HAL). A common northbound API interface is exposed to all protocol daemons. This interface allows provisioning a range of packet processing ASICs such as Broadcom, Mellanox, Cavium. Support for software simulation on a linux host OS is also provided.
