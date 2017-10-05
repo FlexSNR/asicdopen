@@ -26,13 +26,11 @@ package sai
 import (
 	"asicd/pluginManager/pluginCommon"
 	"asicdInt"
-	"encoding/json"
 	"fmt"
 	"net"
-	"os/exec"
+	//"os/exec"
 	"strconv"
 	"unsafe"
-	"utils/commonDefs"
 	"utils/logging"
 )
 
@@ -59,7 +57,9 @@ type SaiPlugin struct {
 	bufferPortStateCB       pluginCommon.UpdateBufferPortStateDBCB
 	bufferGlobalStateInitCB pluginCommon.InitBufferGlobalStateDBCB
 	bufferGlobalStateCB     pluginCommon.UpdateBufferGlobalStateDBCB
-	//updateCoppStatStateCB   pluginCommon.UpdateCoppStatStateDBCB
+	updateCoppStatStateCB   pluginCommon.UpdateCoppStatStateDBCB
+	updateAclStateDBCB      pluginCommon.UpdateAclStateDBCB
+
 	routeChannel chan *pluginCommon.PluginIPRouteInfo
 }
 
@@ -84,7 +84,8 @@ func NewSaiPlugin(
 	bufferPortStateCB pluginCommon.UpdateBufferPortStateDBCB,
 	bufferGlobalStateInitCB pluginCommon.InitBufferGlobalStateDBCB,
 	bufferGlobalStateCB pluginCommon.UpdateBufferGlobalStateDBCB,
-
+	updateCoppStatStateCB pluginCommon.UpdateCoppStatStateDBCB,
+	updateAclStateDBCB pluginCommon.UpdateAclStateDBCB,
 ) *SaiPlugin {
 	logger = log
 	notifyChannel = notifyChan
@@ -102,12 +103,14 @@ func NewSaiPlugin(
 	plugin.bufferPortStateCB = bufferPortStateCB
 	plugin.bufferGlobalStateInitCB = bufferGlobalStateInitCB
 	plugin.bufferGlobalStateCB = bufferGlobalStateCB
+	plugin.updateCoppStatStateCB = updateCoppStatStateCB
+	plugin.updateAclStateDBCB = updateAclStateDBCB
 	plugin.routeChannel = make(chan *pluginCommon.PluginIPRouteInfo, 100000)
 	return (&plugin)
 }
 
 func (p *SaiPlugin) InstallPluginDeps(baseDir string) {
-	_, _ = exec.Command("dvs_stop.sh").CombinedOutput()
+	//	_, _ = exec.Command("dvs_stop.sh").CombinedOutput()
 }
 
 //General plugin functions
@@ -162,7 +165,7 @@ func (p *SaiPlugin) StartRouteServer() {
 						logger.Debug("rethdlr func nil")
 					} //routeConf.DoneChannel <- int(ret)
 				*/
-			} else if routeConf.Op == pluginCommon.PluginOp_Add {
+			} else if routeConf.Op == pluginCommon.PluginOp_Del {
 				ret := p.DeleteIPRoute(routeConf)
 				if routeConf.DoneChannel != nil {
 					routeConf.DoneChannel <- int(ret)
@@ -377,12 +380,15 @@ func (p *SaiPlugin) RestoreLagDB() int {
 }
 func (p *SaiPlugin) CreateLag(obj *pluginCommon.PluginLagInfo) int {
 	var list *C.int
+	var lagId C.uint64_t
 	if len(obj.MemberList) == 0 {
 		list = nil
 	} else {
 		list = (*C.int)(&obj.MemberList[0])
 	}
-	*obj.HwId = (int(C.SaiCreateLag(C.int(obj.HashType), C.int(len(obj.MemberList)), list)))
+	lagId = C.SaiCreateLag(C.int(obj.HashType), C.int(len(obj.MemberList)), list)
+	*obj.HwId = (int(lagId))
+	*obj.VlanId = int(lagId >> 48)
 	return 0
 }
 func (p *SaiPlugin) DeleteLag(obj *pluginCommon.PluginLagInfo) int {
@@ -568,6 +574,31 @@ func (p *SaiPlugin) DeleteIPIntf(ipInfo *pluginCommon.PluginIPInfo) int {
 	return (int(C.SaiRouteAddDel((*C.uint32_t)(&ipInfo.IpAddr[0]), C.int(ipInfo.IpType), C.bool(false))))
 }
 
+func (p *SaiPlugin) CreateIPIntfLoopback(ipInfo *pluginCommon.PluginIPInfo) int {
+	if ipInfo.RefCount == 0 { // if 0 refCount then only do init
+		IfId := pluginCommon.GetIdFromIfIndex(ipInfo.IfIndex)
+		rv := (int(C.SaiCreateIPIntfLoopback((*C.uint32_t)(&ipInfo.IpAddr[0]),
+			C.int(ipInfo.MaskLen), C.int(IfId))))
+		if rv < 0 {
+			return rv
+		}
+	}
+	return (int(C.SaiRouteAddDel((*C.uint32_t)(&ipInfo.IpAddr[0]), C.int(ipInfo.IpType), C.bool(true))))
+}
+
+func (p *SaiPlugin) DeleteIPIntfLoopback(ipInfo *pluginCommon.PluginIPInfo) int {
+	if ipInfo.RefCount == 1 {
+		// If only '1' IP then delete the intf otherwise do not
+		IfId := pluginCommon.GetIdFromIfIndex(ipInfo.IfIndex)
+		rv := int(C.SaiDeleteIPIntfLoopback((*C.uint32_t)(&ipInfo.IpAddr[0]),
+			C.int(ipInfo.MaskLen), C.int(IfId)))
+		if rv < 0 {
+			return rv
+		}
+	}
+	return (int(C.SaiRouteAddDel((*C.uint32_t)(&ipInfo.IpAddr[0]), C.int(ipInfo.IpType), C.bool(false))))
+}
+
 //Sub IPv4 interface related functions
 func (p *SaiPlugin) CreateSubIPv4Intf(obj pluginCommon.SubIntfPluginObj,
 	ifName *string) int {
@@ -585,24 +616,7 @@ func (p *SaiPlugin) UpdateSubIPv4Intf(ifName string, mac net.HardwareAddr,
 //Plugin notifications that need to be published
 //export SaiNotifyLinkStateChange
 func SaiNotifyLinkStateChange(portNum, operState, speed, duplex C.int) {
-	msg := pluginCommon.L2IntfStateNotifyMsg{
-		IfIndex: pluginCommon.GetIfIndexFromIdType(int(portNum), commonDefs.IfTypePort),
-		IfState: uint8(operState),
-	}
-	msgBuf, err := json.Marshal(msg)
-	if err != nil {
-		logger.Err("Error in marshalling Json, in opennsl NotifyLinkStateChange")
-	}
-	notification := pluginCommon.AsicdNotification{
-		MsgType: uint8(pluginCommon.NOTIFY_L2INTF_STATE_CHANGE),
-		Msg:     msgBuf,
-	}
-	notificationBuf, err := json.Marshal(notification)
-	if err != nil {
-		logger.Err("Failed to marshal vlan create message")
-	}
-	notifyChannel <- notificationBuf
-	logger.Info(fmt.Sprintln("Sent notification for port link state change - ", portNum, operState, speed))
+	logger.Info(fmt.Sprintln("Sent notification for port link state change - portNum: ", portNum, operState, speed))
 	plugin.linkStateCB(int32(portNum), int32(speed), pluginCommon.DuplexType[int(duplex)], pluginCommon.UpDownState[int(operState)])
 }
 
@@ -773,33 +787,32 @@ func (v *SaiPlugin) CreateAclConfig(aclName string, aclType string, aclRule plug
 	var dir C.int
 	var at C.int
 
+	aclTableName := C.CString(aclName)
+	defer C.free(unsafe.Pointer(aclTableName))
+
 	ar.ruleName = C.CString(aclRule.RuleName)
 	defer C.free(unsafe.Pointer(ar.ruleName))
-	if aclRule.SourceMac != nil {
+	if len(aclRule.SourceMac) > 0 {
 		ar.sourceMac = (*C.uint8_t)(&aclRule.SourceMac[0])
-		defer C.free(unsafe.Pointer(ar.sourceMac))
 	}
-	if aclRule.DestMac != nil {
+	if len(aclRule.DestMac) > 0 {
 		ar.destMac = (*C.uint8_t)(&aclRule.DestMac[0])
-		defer C.free(unsafe.Pointer(ar.destMac))
 	}
-	if aclRule.SourceIp != nil {
+	if len(aclRule.SourceIp) > 0 && len(aclRule.SourceMask) > 0 {
 		ar.sourceIp = (*C.uint8_t)(&aclRule.SourceIp[0])
-		defer C.free(unsafe.Pointer(ar.sourceIp))
+		ar.sourceMask = (*C.uint8_t)(&aclRule.SourceMask[0])
+	} else if len(aclRule.SourceIp) > 0 && len(aclRule.SourceMask) == 0 {
+		logger.Err("Acl : No config source IP netmask")
+		return -1
+	}
+	if len(aclRule.DestIp) > 0 && len(aclRule.DestMask) > 0 {
+		ar.destIp = (*C.uint8_t)(&aclRule.DestIp[0])
+		ar.destMask = (*C.uint8_t)(&aclRule.DestMask[0])
+	} else if len(aclRule.DestIp) > 0 && len(aclRule.DestMask) == 0 {
+		logger.Err("Acl : No config dest IP netmask")
+		return -1
 	}
 
-	if aclRule.DestIp != nil {
-		ar.destIp = (*C.uint8_t)(&aclRule.DestIp[0])
-		defer C.free(unsafe.Pointer(ar.destIp))
-	}
-	if aclRule.SourceMask != nil {
-		ar.sourceMask = (*C.uint8_t)(&aclRule.SourceMask[0])
-		defer C.free(unsafe.Pointer(ar.sourceMask))
-	}
-	if aclRule.DestMask != nil {
-		ar.destMask = (*C.uint8_t)(&aclRule.DestMask[0])
-		defer C.free(unsafe.Pointer(ar.destMask))
-	}
 	ar.proto = C.int(aclRule.Proto)
 	ar.srcport = C.int(aclRule.SrcPort)
 	ar.dstport = C.int(aclRule.DstPort)
@@ -808,22 +821,47 @@ func (v *SaiPlugin) CreateAclConfig(aclName string, aclType string, aclRule plug
 	ar.l4MinPort = C.int(aclRule.L4MinPort)
 	ar.l4MaxPort = C.int(aclRule.L4MaxPort)
 
+	switch aclRule.L4PortMatch {
+	case "EQ":
+		ar.l4PortMatch = C.int(C.AclEq)
+		if aclRule.L4MinPort != 0 || aclRule.L4MaxPort != 0 {
+			return -1
+		}
+		break
+	case "RANGE":
+		ar.l4PortMatch = C.int(C.AclRange)
+		if aclRule.SrcPort == 0 && aclRule.DstPort == 0 {
+			return -1
+		}
+
+		if aclRule.L4MinPort != 0 && aclRule.L4MaxPort != 0 {
+			return -1
+		}
+		break
+	case "LT", "GT", "NEQ":
+		logger.Err("Acl : not support l4port LT, GT and NEQ.")
+		return -1
+		break
+	default:
+		ar.l4PortMatch = C.int(C.AclNeq)
+	}
+
 	if len(portList) == 0 {
 		return -1
 	}
+
 	switch aclRule.Action {
 	case "DENY":
 		ar.action = C.int(C.AclDeny)
 		break
-
 	case "ALLOW":
 		ar.action = C.int(C.AclAllow)
 		break
-
 	default:
 		logger.Err("ACL : No action defiend. Rule wil not be applied ", aclName)
 		return -1
 	}
+
 	switch aclType {
 	case pluginCommon.ACL_TYPE_IP:
 		at = C.int(C.AclIp)
@@ -836,7 +874,7 @@ func (v *SaiPlugin) CreateAclConfig(aclName string, aclType string, aclRule plug
 		break
 	default:
 		logger.Err("Acl : Acl type is invalid. Make sure it is IP/MAC/MLAG ")
-		return 0
+		return -1
 		break
 	}
 
@@ -849,29 +887,190 @@ func (v *SaiPlugin) CreateAclConfig(aclName string, aclType string, aclRule plug
 		break
 	default:
 		logger.Info("Acl : No direction set for the acl.")
+		return -1
 	}
+	nportList = (*C.int)(&portList[0])
+
+	return int(C.SaiProcessAcl(aclTableName, C.int(at), ar, C.int(len(portList)), nportList, C.int(dir)))
+}
+
+func (p *SaiPlugin) DeleteAcl(aclName string, direction string) int {
+
+	var dir C.int
+
+	aclTableName := C.CString(aclName)
+	defer C.free(unsafe.Pointer(aclTableName))
+
+	switch direction {
+	case "IN":
+		dir = C.int(C.AclIn)
+		break
+	case "OUT":
+		dir = C.int(C.AclOut)
+		break
+	default:
+		logger.Info("Acl : No direction set for the acl.")
+		return -1
+	}
+
+	return int(C.SaiDeleteAcl(aclTableName, dir))
+}
+
+func (p *SaiPlugin) DeleteAclRuleFromAcl(aclName string, aclRule pluginCommon.AclRule, portList []int32, direction string) int {
+
+	var nportList *C.int
+	var ar C.aclRule
+	var dir C.int
+
+	aclTableName := C.CString(aclName)
+	defer C.free(unsafe.Pointer(aclTableName))
+
+	ar.ruleName = C.CString(aclRule.RuleName)
+	defer C.free(unsafe.Pointer(ar.ruleName))
+	if len(aclRule.SourceMac) > 0 {
+		ar.sourceMac = (*C.uint8_t)(&aclRule.SourceMac[0])
+	}
+	if len(aclRule.DestMac) > 0 {
+		ar.destMac = (*C.uint8_t)(&aclRule.DestMac[0])
+	}
+
+	if len(aclRule.SourceIp) > 0 && len(aclRule.SourceMask) > 0 {
+		ar.sourceIp = (*C.uint8_t)(&aclRule.SourceIp[0])
+		ar.sourceMask = (*C.uint8_t)(&aclRule.SourceMask[0])
+	} else if len(aclRule.SourceIp) > 0 && len(aclRule.SourceMask) == 0 {
+		logger.Err("Acl : No config source IP netmask")
+		return -1
+	}
+	if len(aclRule.DestIp) > 0 && len(aclRule.DestMask) > 0 {
+		ar.destIp = (*C.uint8_t)(&aclRule.DestIp[0])
+		ar.destMask = (*C.uint8_t)(&aclRule.DestMask[0])
+	} else if len(aclRule.DestIp) > 0 && len(aclRule.DestMask) == 0 {
+		logger.Err("Acl : No config dest IP netmask")
+		return -1
+	}
+
+	ar.proto = C.int(aclRule.Proto)
+	ar.srcport = C.int(aclRule.SrcPort)
+	ar.dstport = C.int(aclRule.DstPort)
+	ar.l4SrcPort = C.int(aclRule.L4SrcPort)
+	ar.l4DstPort = C.int(aclRule.L4DstPort)
+	ar.l4MinPort = C.int(aclRule.L4MinPort)
+	ar.l4MaxPort = C.int(aclRule.L4MaxPort)
+
 	switch aclRule.L4PortMatch {
 	case "EQ":
 		ar.l4PortMatch = C.int(C.AclEq)
 		break
-	case "NEQ":
-		ar.l4PortMatch = C.int(C.AclNeq)
-		break
-	case "LT", "GT", "RANGE":
+	case "RANGE":
 		ar.l4PortMatch = C.int(C.AclRange)
+		break
+	}
+
+	switch aclRule.Action {
+	case "DENY":
+		ar.action = C.int(C.AclDeny)
+		break
+	case "ALLOW":
+		ar.action = C.int(C.AclAllow)
+		break
+	}
+
+	switch direction {
+	case "IN":
+		dir = C.int(C.AclIn)
+		break
+	case "OUT":
+		dir = C.int(C.AclOut)
+		break
+	default:
+		logger.Info("Acl : No direction set for the acl.")
+		return -1
+	}
+	nportList = (*C.int)(&portList[0])
+
+	return int(C.SaiDeleteAclRuleFromAcl(aclTableName, ar, C.int(len(portList)), nportList, C.int(dir)))
+}
+
+func (p *SaiPlugin) UpdateAclRule(aclName string, aclRule pluginCommon.AclRule) int {
+	var ar C.aclRule
+
+	aclTableName := C.CString(aclName)
+	defer C.free(unsafe.Pointer(aclTableName))
+
+	ar.ruleName = C.CString(aclRule.RuleName)
+	defer C.free(unsafe.Pointer(ar.ruleName))
+	if len(aclRule.SourceMac) > 0 {
+		ar.sourceMac = (*C.uint8_t)(&aclRule.SourceMac[0])
+	}
+	if len(aclRule.DestMac) > 0 {
+		ar.destMac = (*C.uint8_t)(&aclRule.DestMac[0])
+	}
+
+	if len(aclRule.SourceIp) > 0 && len(aclRule.SourceMask) > 0 {
+		ar.sourceIp = (*C.uint8_t)(&aclRule.SourceIp[0])
+		ar.sourceMask = (*C.uint8_t)(&aclRule.SourceMask[0])
+	} else if len(aclRule.SourceIp) > 0 && len(aclRule.SourceMask) == 0 {
+		logger.Err("Acl : No config source IP netmask")
+		return -1
+	}
+	if len(aclRule.DestIp) > 0 && len(aclRule.DestMask) > 0 {
+		ar.destIp = (*C.uint8_t)(&aclRule.DestIp[0])
+		ar.destMask = (*C.uint8_t)(&aclRule.DestMask[0])
+	} else if len(aclRule.DestIp) > 0 && len(aclRule.DestMask) == 0 {
+		logger.Err("Acl : No config dest IP netmask")
+		return -1
+	}
+
+	ar.proto = C.int(aclRule.Proto)
+	ar.srcport = C.int(aclRule.SrcPort)
+	ar.dstport = C.int(aclRule.DstPort)
+	ar.l4SrcPort = C.int(aclRule.L4SrcPort)
+	ar.l4DstPort = C.int(aclRule.L4DstPort)
+	ar.l4MinPort = C.int(aclRule.L4MinPort)
+	ar.l4MaxPort = C.int(aclRule.L4MaxPort)
+
+	switch aclRule.L4PortMatch {
+	case "EQ":
+		ar.l4PortMatch = C.int(C.AclEq)
+		if aclRule.L4MinPort != 0 || aclRule.L4MaxPort != 0 {
+			return -1
+		}
+		break
+	case "RANGE":
+		ar.l4PortMatch = C.int(C.AclRange)
+		if aclRule.SrcPort == 0 && aclRule.DstPort == 0 {
+			return -1
+		}
+
+		if aclRule.L4MinPort != 0 && aclRule.L4MaxPort != 0 {
+			return -1
+		}
+		break
+	case "LT", "GT", "NEQ":
+		logger.Err("Acl : not support l4port LT, GT and NEQ.")
+		return -1
 		break
 	default:
 		ar.l4PortMatch = C.int(C.AclNeq)
 	}
 
-	nportList = (*C.int)(&portList[0])
+	switch aclRule.Action {
+	case "DENY":
+		ar.action = C.int(C.AclDeny)
+		break
+	case "ALLOW":
+		ar.action = C.int(C.AclAllow)
+		break
+	default:
+		logger.Err("ACL : No action defiend. Rule wil not be applied ", aclName)
+		return -1
+	}
 
-	return int(C.SaiProcessAcl(C.CString(aclName), C.int(at), ar, C.int(len(portList)), nportList, C.int(dir)))
-	return 0
+	return int(C.UpdateAclRule(aclTableName, ar))
 }
 
 func (p *SaiPlugin) ClearPortStat(portNum int32) int {
-	return 0
+	return int(C.SaiClearPortStat(C.int(portNum)))
 }
 
 func (p *SaiPlugin) UpdateCoppStatStateDB(startId, endId int) int {

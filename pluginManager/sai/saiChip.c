@@ -1,22 +1,22 @@
+#include <arpa/inet.h>
 #include <stdio.h>
+#include <stdint.h>
 #include <string.h>
 #include <syslog.h>
-#include <stdint.h>
-#include <arpa/inet.h>
 
 #include <sai.h>
-#include <saitypes.h>
-#include <saistatus.h>
+#include <saiacl.h>
 #include <saihostintf.h>
-#include <saiswitch.h>
-#include <sairouter.h>
-#include <sairouterintf.h>
 #include <saineighbor.h>
 #include <sainexthop.h>
 #include <sainexthopgroup.h>
-#include <sairoute.h>
-#include <saiacl.h>
 #include <saipolicer.h>
+#include <sairoute.h>
+#include <sairouter.h>
+#include <sairouterintf.h>
+#include <saistatus.h>
+#include <saiswitch.h>
+#include <saitypes.h>
 
 #include "_cgo_export.h"
 #include "pluginCommon.h"
@@ -36,11 +36,27 @@ extern sai_next_hop_group_api_t* sai_nh_grp_api_tbl;
 extern sai_buffer_api_t* sai_buffer_api_tbl;
 extern sai_acl_api_t* sai_acl_api_tbl;
 extern sai_policer_api_t* sai_policer_api_tbl;
+extern sai_stp_api_t* sai_stp_api_tbl;
+sai_lag_api_t* sai_lag_api_tbl = NULL;
 
+#ifdef SAI_BUILD
 sai_mac_t switchMacAddr;
 extern sai_object_id_t port_list[MAX_NUM_PORTS];
 extern sai_object_id_t globalVrId;
 extern int maxSysPorts;
+
+typedef struct LagMember {
+    sai_object_id_t m_lag_id;
+    sai_object_id_t m_lag_member_id;
+} LagMember_t;
+/*
+ * One port should belong to one LAG.
+ * Using MAX port number as MAX LAG number.
+ */
+sai_object_id_t lag_list[MAX_NUM_PORTS];
+/* Store lag information for each port */
+LagMember_t port_lag_list[MAX_NUM_PORTS];
+#endif
 
 //Forward declarations
 int SaiCreateLinuxIfForAsicPorts(int ifMapCount, ifMapInfo_t *ifMap);
@@ -48,14 +64,16 @@ int SaiCreateLinuxIf(int port, char *ifName, sai_object_id_t *hostIfId);
 int SaiDeleteLinuxIfForAsicPorts(int ifMapCount, ifMapInfo_t *ifMap);
 
 /* List of call back functions for various events. Needs to be implemented */
-extern void sai_port_state_cb (uint32_t count, sai_port_oper_status_notification_t *data);
+extern void sai_port_state_cb (uint32_t count,
+        sai_port_oper_status_notification_t *data);
 
 static void sai_port_cb (uint32_t count,
         sai_port_event_notification_t *data)
 {
 }
 
-extern void sai_fdb_cb (uint32_t count, sai_fdb_event_notification_data_t *data);
+extern void sai_fdb_cb (uint32_t count,
+        sai_fdb_event_notification_data_t *data);
 
 static void sai_switch_state_cb (sai_switch_oper_status_t switchstate)
 {
@@ -68,6 +86,7 @@ static void sai_packet_cb (const void *buffer,
 {
 
 }
+
 static void sai_switch_shutdown_cb (void)
 {
 }
@@ -77,45 +96,16 @@ static void sai_switch_shutdown_cb (void)
 const char* profile_get_value(sai_switch_profile_id_t profile_id,
         const char* variable)
 {
-#if defined(MLNX_SAI)
-    /*
-     * FIXME: Need to implement a generic mechanism to read in a custom config file
-     * and create a config cache. Cache is a map of string key's to string value's
-     */
-    if (!strncmp(SAI_KEY_INIT_CONFIG_FILE, variable, 255)) {
-        return "/usr/share/sai_2700.xml";
-    }
-//#if 0 //added during debbuging
-#elif defined(CAVM_SAI)
-    if (!strncmp("devType", variable, 255)) {
-        return "1";
-    } else if (!strncmp("initType", variable, 255)) {
-        return "1";
-    } else if (!strncmp("pipeLineNum", variable, 255)) {
-        return "2";
-    } else if (!strncmp("profileNum", variable, 255)) {
-        return "1";
-    } else if (!strncmp("performanceMode", variable, 255)) {
-        return "0";
-    } else if (!strncmp("mode", variable, 255)) {
-        return "18";
-    } else if (!strncmp("coreClkFreq", variable, 255)) {
-        return "2";
-    } else if (!strncmp("diag", variable, 255)) {
-        return "0";
-    } else if (!strncmp("hwCfgPath", variable, 255)) {
-        return "";
-    }
-//#endif
-#endif
     return NULL;
 }
+
 int profile_get_next_value(sai_switch_profile_id_t profile_id,
         const char** variable,
         const char** value)
 {
     return -1;
 }
+
 const service_method_table_t services =
 {
     profile_get_value,
@@ -159,7 +149,8 @@ int SaiQueryAndPopulateAPITables()
     //Initialize VR API
     rv = sai_api_query(SAI_API_VIRTUAL_ROUTER, (void**)&sai_vr_api_tbl);
     if ((rv != SAI_STATUS_SUCCESS) || (sai_vr_api_tbl == NULL)) {
-        syslog(LOG_ERR, "Failure retrieving virtual router api table. Aborting init.");
+        syslog(LOG_ERR, "Failure retrieving virtual router api table. "
+                "Aborting init.");
         return -1;
     }
     //Initialize route API
@@ -171,133 +162,103 @@ int SaiQueryAndPopulateAPITables()
     //Initialize neighbor API
     rv = sai_api_query(SAI_API_NEIGHBOR, (void**)&sai_nbr_api_tbl);
     if ((rv != SAI_STATUS_SUCCESS) || (sai_nbr_api_tbl == NULL)) {
-        syslog(LOG_ERR, "Failure retrieving neighbor api table. Aborting init.");
+        syslog(LOG_ERR, "Failure retrieving neighbor api table. "
+                "Aborting init.");
         return -1;
     }
     //Initialize next hop API
     rv = sai_api_query(SAI_API_NEXT_HOP, (void**)&sai_nh_api_tbl);
     if ((rv != SAI_STATUS_SUCCESS) || (sai_nh_api_tbl == NULL)) {
-        syslog(LOG_ERR, "Failure retrieving next hop api table. Aborting init.");
+        syslog(LOG_ERR, "Failure retrieving next hop api table. "
+                "Aborting init.");
         return -1;
     }
     //Initialize next hop group API
     rv = sai_api_query(SAI_API_NEXT_HOP_GROUP, (void**)&sai_nh_grp_api_tbl);
     if ((rv != SAI_STATUS_SUCCESS) || (sai_nh_grp_api_tbl == NULL)) {
-        syslog(LOG_ERR, "Failure retrieving next hop group api table. Aborting init.");
+        syslog(LOG_ERR, "Failure retrieving next hop group api table. "
+                "Aborting init.");
         return -1;
     }
     //Initialize router interface API
     rv = sai_api_query(SAI_API_ROUTER_INTERFACE, (void**)&sai_rif_api_tbl);
     if ((rv != SAI_STATUS_SUCCESS) || (sai_rif_api_tbl == NULL)) {
-        syslog(LOG_ERR, "Failure retrieving router intf api table. Aborting init.");
+        syslog(LOG_ERR, "Failure retrieving router intf api table. "
+                "Aborting init.");
         return -1;
     }
     //Initialize buffer interface API
     rv = sai_api_query(SAI_API_BUFFERS, (void**)&sai_buffer_api_tbl);
     if ((rv != SAI_STATUS_SUCCESS) || (sai_buffer_api_tbl == NULL)) {
-         syslog(LOG_ERR, "Failure retrieving buffer api table. Aborting init.");
-	 return -1; 
-    }  
-    rv = sai_api_query(SAI_API_ACL, (void**)&sai_acl_api_tbl); 
-    if((rv != SAI_STATUS_SUCCESS) || (sai_acl_api_tbl == NULL)) {
-	syslog(LOG_ERR, "Failure retrieving acl api table. Aborting init.");
-   	return -1;
+        syslog(LOG_ERR, "Failure retrieving buffer api table. Aborting init.");
+        return -1;
     }
+    //Initialize acl API
+    rv = sai_api_query(SAI_API_ACL, (void**)&sai_acl_api_tbl);
+    if((rv != SAI_STATUS_SUCCESS) || (sai_acl_api_tbl == NULL)) {
+        syslog(LOG_ERR, "Failure retrieving acl api table. Aborting init.");
+        return -1;
+    }
+    //Initialize policer API
     rv = sai_api_query(SAI_API_POLICER, (void**)&sai_policer_api_tbl);
     if((rv != SAI_STATUS_SUCCESS) || (sai_policer_api_tbl == NULL)) {
         syslog(LOG_ERR, "Failure retrieving policer api table. Aborting init.");
-	return -1;
+        return -1;
+    }
+    //Initialize lag API
+    rv = sai_api_query(SAI_API_LAG, (void **)&sai_lag_api_tbl);
+    if((rv != SAI_STATUS_SUCCESS) || (sai_lag_api_tbl == NULL)) {
+        syslog(LOG_ERR, "Failure retrieving lag api table. Aborting init.");
+        return -1;
+    }
+    //Initialize stp API
+    rv = sai_api_query(SAI_API_STP, (void **)&sai_stp_api_tbl);
+    if((rv != SAI_STATUS_SUCCESS) || (sai_stp_api_tbl == NULL)) {
+        syslog(LOG_ERR, "Failure retrieving stp api table. Aborting init.");
+        return -1;
     }
 #endif
     return 0;
 }
 
-static int SaiInitTrapId() 
+void SaiInitAPILog()
 {
 #ifdef SAI_BUILD
-    int i, cport, netDevType;
-    sai_status_t rv;
-    sai_attribute_t attr;
-    /* Set traps to CPU */
-    sai_hostif_trap_id_t sai_trap_ids[] = {
-        SAI_HOSTIF_TRAP_ID_TTL_ERROR,
-        SAI_HOSTIF_TRAP_ID_ARP_REQUEST,
-        SAI_HOSTIF_TRAP_ID_ARP_RESPONSE,
-        SAI_HOSTIF_TRAP_ID_DHCP,
-        SAI_HOSTIF_TRAP_ID_LLDP,
-        SAI_HOSTIF_TRAP_ID_LACP,
-        SAI_HOSTIF_TRAP_ID_IPV6_NEIGHBOR_DISCOVERY,
-#ifdef CAVM_SAI
-        // xpSaiHostInterface.c defined here what they mean
-        SAI_HOSTIF_TRAP_ID_ROUTER_CUSTOM_RANGE_BASE + 1,
-        SAI_HOSTIF_TRAP_ID_ROUTER_CUSTOM_RANGE_BASE + 2,
-        SAI_HOSTIF_TRAP_ID_ROUTER_CUSTOM_RANGE_BASE + 3,
-        SAI_HOSTIF_TRAP_ID_ROUTER_CUSTOM_RANGE_BASE + 4,
-        SAI_HOSTIF_TRAP_ID_ROUTER_CUSTOM_RANGE_BASE + 5,
-        SAI_HOSTIF_TRAP_ID_ROUTER_CUSTOM_RANGE_BASE + 6,
-        SAI_HOSTIF_TRAP_ID_ROUTER_CUSTOM_RANGE_BASE + 7,
+    sai_log_set(SAI_API_SWITCH,                 SAI_LOG_NOTICE);
+    sai_log_set(SAI_API_VIRTUAL_ROUTER,         SAI_LOG_NOTICE);
+    sai_log_set(SAI_API_PORT,                   SAI_LOG_NOTICE);
+    sai_log_set(SAI_API_FDB,                    SAI_LOG_NOTICE);
+    sai_log_set(SAI_API_VLAN,                   SAI_LOG_NOTICE);
+    sai_log_set(SAI_API_HOST_INTERFACE,         SAI_LOG_NOTICE);
+    sai_log_set(SAI_API_MIRROR,                 SAI_LOG_NOTICE);
+    sai_log_set(SAI_API_ROUTER_INTERFACE,       SAI_LOG_NOTICE);
+    sai_log_set(SAI_API_NEIGHBOR,               SAI_LOG_NOTICE);
+    sai_log_set(SAI_API_NEXT_HOP,               SAI_LOG_NOTICE);
+    sai_log_set(SAI_API_NEXT_HOP_GROUP,         SAI_LOG_NOTICE);
+    sai_log_set(SAI_API_ROUTE,                  SAI_LOG_NOTICE);
+    sai_log_set(SAI_API_LAG,                    SAI_LOG_NOTICE);
+    sai_log_set(SAI_API_POLICER,                SAI_LOG_NOTICE);
+    sai_log_set(SAI_API_TUNNEL,                 SAI_LOG_NOTICE);
+    sai_log_set(SAI_API_QUEUE,                  SAI_LOG_NOTICE);
+    sai_log_set(SAI_API_SCHEDULER,              SAI_LOG_NOTICE);
+    sai_log_set(SAI_API_WRED,                   SAI_LOG_NOTICE);
+    sai_log_set(SAI_API_QOS_MAPS,               SAI_LOG_NOTICE);
+    sai_log_set(SAI_API_BUFFERS,                SAI_LOG_NOTICE);
+    sai_log_set(SAI_API_SCHEDULER_GROUP,        SAI_LOG_NOTICE);
+    sai_log_set(SAI_API_ACL,                    SAI_LOG_NOTICE);
+    sai_log_set(SAI_API_STP,                    SAI_LOG_NOTICE);
 #endif
-    };
-    /* Set netdev type per platform  */ 
-#if defined(MLNX_SAI)
-    netDevType = SAI_HOSTIF_TRAP_CHANNEL_L2_NETDEV;
-#elif defined(CAVM_SAI)
-    netDevType = SAI_HOSTIF_TRAP_CHANNEL_NETDEV;
-#endif
-    int traps = sizeof(sai_trap_ids)/sizeof(*sai_trap_ids);
-        for (i = 0; i < traps; i++) {
-            /* Setting PACKET ACTION Trap */
-            attr.id = SAI_HOSTIF_TRAP_ATTR_PACKET_ACTION;
-            attr.value.s32 = SAI_PACKET_ACTION_TRAP;
-            rv = sai_hostif_api_tbl->set_trap_attribute(sai_trap_ids[i], &attr);
-            if (rv != SAI_STATUS_SUCCESS)
-              {
-                syslog(LOG_ERR,"Failed to set packet action trap attribute %d, rv : 0x%x\n", sai_trap_ids[i], rv);
-                return -1;
-              } 
-            /* Setting TRAP CHANNEL */
-            attr.id = SAI_HOSTIF_TRAP_ATTR_TRAP_CHANNEL;
-            attr.value.s32 = netDevType;
-            rv = sai_hostif_api_tbl->set_trap_attribute(sai_trap_ids[i], &attr);
-            if (rv != SAI_STATUS_SUCCESS)
-              {
-                syslog(LOG_ERR,"Failed to set channel trap attribute %d, rv : 0x%x\n", sai_trap_ids[i], rv);
-                return -1;
-              } 
-        }
-#endif
-#ifdef MLNX_SAI // MLNX specific trap id's with different attribute    
-    attr.id = SAI_HOSTIF_USER_DEFINED_TRAP_ATTR_TRAP_CHANNEL;        
-    attr.value.s32 = netDevType;        
-    rv = sai_hostif_api_tbl->set_user_defined_trap_attribute(SAI_HOSTIF_USER_DEFINED_TRAP_ID_ROUTER_MIN, &attr);        
-    if (rv != SAI_STATUS_SUCCESS) {        
-        syslog(LOG_ERR, "Failed to set trap channel as l2 netdev for packets matching route entry with trap action set. Aborting init");        
-        return -1;        
-    }        
-    attr.id = SAI_HOSTIF_USER_DEFINED_TRAP_ATTR_TRAP_CHANNEL;        
-    attr.value.s32 = netDevType;        
-    rv = sai_hostif_api_tbl->set_user_defined_trap_attribute(SAI_HOSTIF_USER_DEFINED_TRAP_ID_NEIGH_MIN, &attr);        
-    if (rv != SAI_STATUS_SUCCESS) {        
-        syslog(LOG_ERR, "Failed to set trap channel as l2 netdev for packets matching neighbor entries with trap action set. Aborting init");        
-        return -1;        
-    }
-#endif
-    return SAI_STATUS_SUCCESS;
 }
 
 int SaiInit(int bootMode, int ifMapCount, ifMapInfo_t *ifMap, uint8_t *macAddr)
 {
 #ifdef SAI_BUILD
-    int i, cport, netDevType;
+    int i, netDevType;
     sai_status_t rv;
     sai_attribute_t attr;
+    sai_attribute_t attrs[3];
     sai_object_id_t cpuPort;
     sai_switch_notification_t cb_list;
-#ifdef CAVM_SAI
-    char swHwAddr[16] = "as7512";
-#else
-    char swHwAddr[16] = "SaiSwitch";
-#endif
 
     //Save switch mac addr locally
     memcpy(switchMacAddr, macAddr, MAC_ADDR_LEN);
@@ -306,12 +267,16 @@ int SaiInit(int bootMode, int ifMapCount, ifMapInfo_t *ifMap, uint8_t *macAddr)
         syslog(LOG_ERR, "Failure initializing SAI switch APIs. Aborting init.");
         return -1;
     }
+
     //Populate API tables
     rv = SaiQueryAndPopulateAPITables();
     if (rv < 0) {
         syslog(LOG_ERR, "Failed to query SAI API tables. Aborting init.");
         return -1;
     }
+
+    SaiInitAPILog();
+
     //Initialize switch
     memset (&cb_list, 0, sizeof(sai_switch_notification_t));
     cb_list.on_switch_state_change = sai_switch_state_cb;
@@ -321,54 +286,62 @@ int SaiInit(int bootMode, int ifMapCount, ifMapInfo_t *ifMap, uint8_t *macAddr)
     cb_list.on_port_event = sai_port_cb;
     cb_list.on_packet_event = sai_packet_cb;
     if (sai_switch_api_tbl->initialize_switch != NULL) {
-        rv = sai_switch_api_tbl->initialize_switch (0, swHwAddr, NULL, &cb_list);
+        rv = sai_switch_api_tbl->initialize_switch (0, "", "", &cb_list);
         if (rv != SAI_STATUS_SUCCESS) {
             syslog(LOG_ERR, "Failure initalizing switch. Aborting init");
         }
     }
+
     //Connect to SDK
-    rv = sai_switch_api_tbl->connect_switch(0, swHwAddr, &cb_list);
+    rv = sai_switch_api_tbl->connect_switch(0, "", &cb_list);
     if (rv != SAI_STATUS_SUCCESS) {
         syslog(LOG_ERR, "Failure connecting to SDK. Aborting init");
     }
 
-#if 0
     // Added following attribute during debugging session
     attr.id = SAI_SWITCH_ATTR_SRC_MAC_ADDRESS;
     memcpy(attr.value.mac, switchMacAddr, 6);
     rv = sai_switch_api_tbl->set_switch_attribute(&attr);
-    if (rv != SAI_STATUS_SUCCESS)
-      {
+    if (rv != SAI_STATUS_SUCCESS) {
         syslog(LOG_ERR, "Failed to set MAC address to switch 0x%x\n", rv);
         return -1;
-      }
-#endif
+    }
     // end of attribute
+
     //Cache max number of ports
     attr.id = SAI_SWITCH_ATTR_PORT_NUMBER;
     rv = sai_switch_api_tbl->get_switch_attribute(1, &attr);
     if (rv != SAI_STATUS_SUCCESS) {
         syslog(LOG_ERR, "Failure retrieving port id's. Aborting init");
-    }    
+        return -1;
+    }
     //Cache max number of ports
     maxSysPorts = attr.value.u32;
-    syslog(LOG_INFO, "Retrieved port id's after doing portNum. Total ports count = %d\n", maxSysPorts);
+    syslog(LOG_INFO, "Retrieved port id's after doing portNum. "
+            "Total ports count = %d\n", maxSysPorts);
 
     //Retrieve port object ids
     attr.id = SAI_SWITCH_ATTR_PORT_LIST;
     attr.value.objlist.count = MAX_NUM_PORTS;
-    //port_list + 1 used below so that port numbers can be used to directly index array
-    attr.value.objlist.list = port_list+1;
+    /*
+     * port_list + 1 used below so that
+     * port numbers can be used to directly index array
+     */
+    attr.value.objlist.list = port_list + 1;
     rv = sai_switch_api_tbl->get_switch_attribute(1, &attr);
     if (rv != SAI_STATUS_SUCCESS) {
-        syslog(LOG_ERR, "Failure retrieving port id's after doing portList. Aborting init");
+        syslog(LOG_ERR, "Failure retrieving port id's after doing portList. "
+                "Aborting init");
+        return -1;
     }
+
     // Map front panel ports to linux interfaces
     rv = SaiCreateLinuxIfForAsicPorts(ifMapCount, ifMap);
     if (rv < 0) {
         syslog(LOG_ERR, "Failed to map asic ports to linux interfaces");
         return -1;
     }
+
     // Disable all ports
     for (i = 1; i <= maxSysPorts; i++) {
         attr.id = SAI_PORT_ATTR_ADMIN_STATE;
@@ -379,37 +352,33 @@ int SaiInit(int bootMode, int ifMapCount, ifMapInfo_t *ifMap, uint8_t *macAddr)
             return -1;
         }
     }
+
     /* Retrieve global vr id */
     attr.id = SAI_SWITCH_ATTR_DEFAULT_VIRTUAL_ROUTER_ID;
     rv = sai_switch_api_tbl->get_switch_attribute(1, &attr);
     if (rv != SAI_STATUS_SUCCESS) {
-        syslog(LOG_ERR, "Failed to retrieve global VR instance. Aborting init");
+        syslog(LOG_ERR, "Failed to retrieve global VR instance. "
+                "Aborting init");
         return -1;
     }
     globalVrId = attr.value.oid;
     //Initialize port data structure
     SaiPortInit(ifMapCount, ifMap);
 
-    /* Init Trap ID for System */
-    if (SaiInitTrapId() == SAI_STATUS_SUCCESS) {
-        syslog(LOG_INFO, "Asicd SAI trapid  initialization complete !");
-    } else {
-        syslog(LOG_ERR, "Asicd SAI Init Failed!!!!");
-    }
-    
+    //Initialize L3 data
+    SaiL3Init();
+
     /* init CoPP feature */
-    if (SaiCoPPInit() == SAI_STATUS_SUCCESS) {
-	syslog(LOG_INFO, "Asicd COPP initialization done.!");
-    } else {
-	syslog(LOG_ERR, "Copp SAI init failed.");
-    }
     if (SaiCoPPConfig() == SAI_STATUS_SUCCESS) {
-	syslog(LOG_INFO, "Asicd CoPP config done.!");
+        syslog(LOG_INFO, "Asicd CoPP config done.!");
     } else {
-	syslog(LOG_ERR, "CoPP SAI config failed.");
-	syslog(LOG_ERR, "Asicd SAI Init Failed!!!!");
+        syslog(LOG_ERR, "CoPP SAI config failed.");
     }
     syslog(LOG_INFO, "Asicd SAI initialization complete !");
+
+    /* Init ACL struct */
+    SaiInitAcl();
+
 #endif
     return 0;
 }
@@ -424,25 +393,162 @@ int SaiDeinit(int cacheSwState)
     }
     rv = SaiDeleteLinuxIfForAsicPorts(ALL_INTERFACES, NULL);
     if (rv < 0) {
-        syslog(LOG_ERR, "Failed to delete mapping of asic ports to linux interfaces");
+        syslog(LOG_ERR, "Failed to delete mapping of asic ports to "
+                "linux interfaces");
         return -1;
+    }
+
+    // Release all data release
+    sai_switch_api_tbl->shutdown_switch(false);
+#endif
+    return 0;
+}
+
+uint64_t SaiCreateLag(int hashType, int portCount, int *ports)
+{
+#ifdef SAI_BUILD
+    sai_object_id_t lagId;
+    sai_status_t rv;
+    int lag_id;
+    int i;
+
+    syslog(LOG_INFO, "SaiCreateLag=> hashType: %d, portCount: %d", hashType,
+            portCount);
+    rv = sai_lag_api_tbl->create_lag(&lagId, 0, NULL);
+    if (rv != SAI_STATUS_SUCCESS) {
+        syslog(LOG_ERR, "Failed to create LAG, lid:%lx", lagId);
+        return -1;
+    }
+
+    lag_id = (int)lagId;
+    syslog(LOG_ERR, "Create an empty LAG, lid: %d", lag_id);
+
+    for (i = 0; i < portCount; i++) {
+        SaiAddLagMember(lag_id, ports[i]);
+    }
+
+    lag_list[lag_id] = lagId;
+
+    return lagId;
+#else
+    return 0;
+#endif
+}
+
+int SaiDeleteLag(int lagId)
+{
+#ifdef SAI_BUILD
+    sai_status_t rv;
+    sai_object_id_t lag_id;
+
+    syslog(LOG_INFO, "SaiDeleteLag=> lagId: %d", lagId);
+
+    lag_id = lag_list[lagId];
+
+    rv = sai_lag_api_tbl->remove_lag(lag_id);
+    if (rv != SAI_STATUS_SUCCESS) {
+        syslog(LOG_ERR, "Failed to remove LAG, lid:%d", lagId);
+        return -1;
+    }
+
+    syslog(LOG_INFO, "Remove LAG, lid: %d", lagId);
+
+    lag_list[lagId] = 0;
+#endif
+    return 0;
+}
+
+int SaiUpdateLag(int lagId, int hashType, int oldPortCount, int *oldPorts,
+        int portCount, int *ports)
+{
+#ifdef SAI_BUILD
+    int i, j, is_found;
+    sai_object_id_t lag_id;
+
+    syslog(LOG_INFO, "SaiUpdateLag=> lagId: %d, old: %d, new: %d", lagId,
+            oldPortCount, portCount);
+
+    /* Check added port */
+    for (i = 0; i < portCount; i++) {
+        is_found = 0;
+        for (j = 0; j < oldPortCount; j++) {
+            if (ports[i] == oldPorts[j]) {
+                is_found = 1;
+                break;
+            }
+        }
+        if (is_found == 0) {
+            SaiAddLagMember(lag_list[lagId], ports[i]);
+        }
+    }
+
+    /* Check removed port */
+    for (i = 0; i < oldPortCount; i++) {
+        is_found = 0;
+        for (j = 0; j < portCount; j++) {
+            if (oldPorts[i] == ports[j]) {
+                is_found = 1;
+                break;
+            }
+        }
+        if (is_found == 0) {
+            SaiRemoveLagMember(lag_list[lagId], oldPorts[i]);
+        }
     }
 #endif
     return 0;
 }
 
-int SaiCreateLag(int hashType, int portCount, int *ports)
+int SaiAddLagMember(sai_object_id_t lagId, int portId)
 {
+#ifdef SAI_BUILD
+    sai_attribute_t attrs[2];
+    sai_object_id_t lag_member_id;
+    sai_status_t rv;
+
+    syslog(LOG_INFO, "Add port to LAG: %lx => %d", lagId, portId);
+
+    attrs[0].id = SAI_LAG_MEMBER_ATTR_LAG_ID;
+    attrs[0].value.oid = lagId;
+
+    attrs[1].id = SAI_LAG_MEMBER_ATTR_PORT_ID;
+    attrs[1].value.oid = port_list[portId];
+
+    rv = sai_lag_api_tbl->create_lag_member(&lag_member_id, 2, attrs);
+    if (rv != SAI_STATUS_SUCCESS) {
+        syslog(LOG_ERR, "Failed to add member %lx (%d) to LAG %lx",
+                port_list[portId], portId, lagId);
+        return -1;
+    }
+
+    syslog(LOG_INFO, "Add member %lx (%d) to LAG %lx", lag_member_id,
+            portId, lagId);
+
+    port_lag_list[portId].m_lag_id = lagId;
+    port_lag_list[portId].m_lag_member_id = lag_member_id;
+#endif
     return 0;
 }
 
-int SaiDeleteLag(int lagId)
+int SaiRemoveLagMember(sai_object_id_t lagId, int portId)
 {
-    return 0;
-}
+#ifdef SAI_BUILD
+    sai_status_t rv;
 
-int SaiUpdateLag(int lagId, int hashType, int oldPortCount, int *oldPorts, int portCount, int *ports)
-{
+    syslog(LOG_INFO, "Remove port from LAG: %lx => %d", lagId, portId);
+    rv = sai_lag_api_tbl->remove_lag_member(port_lag_list[portId].m_lag_member_id);
+    if (rv != SAI_STATUS_SUCCESS) {
+        syslog(LOG_ERR, "Failed to remove member %lx (%d) from LAG %lx",
+                port_list[portId], portId, lagId);
+        return -1;
+    }
+
+    syslog(LOG_INFO, "Remove member %lx (%d) from LAG %lx", port_list[portId],
+            portId, lagId);
+
+    port_lag_list[portId].m_lag_id = 0;
+    port_lag_list[portId].m_lag_member_id = 0;
+#endif
     return 0;
 }
 
@@ -453,5 +559,17 @@ int SaiRestoreLagDB()
 
 void SaiDevShell(void)
 {
+#ifdef SAI_BUILD
+    sai_status_t rv;
+    sai_attribute_t attr;
 
+    // Enable driver shell
+    attr.id = SAI_SWITCH_ATTR_SWITCH_SHELL_ENABLE;
+    attr.value.booldata = 1;  // TRUE
+    rv = sai_switch_api_tbl->set_switch_attribute(&attr);
+    if (rv != SAI_STATUS_SUCCESS) {
+        syslog(LOG_ERR, "Failed to enable driver shell");
+    }
+    // end of attribute
+#endif
 }

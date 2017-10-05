@@ -1,18 +1,20 @@
 #ifndef SAI_COPP_H
 #define SAI_COPP_H
 
-#include <syslog.h>
-#include <string.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include <syslog.h>
+
 #include <sai.h>
-#include <saitypes.h>
-#include <saistatus.h>
 #include <saiqueue.h>
+#include <saistatus.h>
+#include <saitypes.h>
+
 #include "pluginCommon.h"
 
-/* TC based on 8 queues for 
+/* TC based on 8 queues for
  * the CPU.
  */
 #define SAI_QOS_PRIORITY_0 0
@@ -24,11 +26,13 @@
 #define SAI_QOS_PRIORITY_6 6
 #define SAI_QOS_PRIORITY_7 7
 #define COPP_TABLE_ATTR 5
-#define ACL_TABLE_ATTR 7
-#define ACL_DEFAULT_TABLE_ATTR 3 //size , priority , acl stage
+#define ACL_TABLE_ATTR 12
+// size(not yet supp), priority, acl stage, Bind point
+#define ACL_DEFAULT_TABLE_ATTR 3
 #define COPP_ACL_TABLE_SIZE 128
-#define ACL_TABLE_SIZE 255  //CHECK LIMIT FOR SAI
-
+#define ACL_TABLE_SIZE 1024  //CHECK LIMIT FOR SAI
+#define ACL_MAX_TABLE 256
+#define DEFAULT_TABLE_PRIORITY 5
 
 typedef struct SaiTblAttr {
 	int id;
@@ -36,8 +40,8 @@ typedef struct SaiTblAttr {
 } SaiTblAttr_t;
 
 /************* COPP structs *******/
-/* 
- * Match fields to be enabled/disabled 
+/*
+ * Match fields to be enabled/disabled
  * in CoPP
  */
 static const SaiTblAttr_t CoppAclTblAttr[] = {
@@ -46,7 +50,7 @@ static const SaiTblAttr_t CoppAclTblAttr[] = {
 {SAI_ACL_TABLE_ATTR_FIELD_ETHER_TYPE, 1},
 {SAI_ACL_TABLE_ATTR_FIELD_DST_IP, 1},
 {SAI_ACL_TABLE_ATTR_FIELD_DST_MAC, 1},
-//{SAI_ACL_TABLE_ATTR_FIELD_SRC_IPv6, 1}, Not supported 
+//{SAI_ACL_TABLE_ATTR_FIELD_SRC_IPv6, 1}, Not supported
 //{SAI_ACL_TABLE_ATTR_FIELD_DST_IPv6, 1}  Not supported
 };
 
@@ -57,7 +61,7 @@ typedef struct CoppData_s {
 	uint64_t policer_cir;
 	uint64_t policer_cbs;
 	uint64_t policer_pbs;
-}CoppData_t;
+} CoppData_t;
 
 typedef struct CoppGlobalData_s {
 	sai_object_id_t  table_id;
@@ -69,28 +73,48 @@ typedef struct CoppGlobalData_s {
 /********** ACL structs **********/
 // Update ACL_TABLE_ATTR for every new field added.
 static const SaiTblAttr_t AclIngressTblAttr[] = {
-{SAI_ACL_TABLE_ATTR_FIELD_IP_PROTOCOL,1},
-{SAI_ACL_TABLE_ATTR_FIELD_L4_DST_PORT, 1}, 
-{SAI_ACL_TABLE_ATTR_FIELD_ETHER_TYPE, 1}, 
-{SAI_ACL_TABLE_ATTR_FIELD_DST_IP, 1}, 
-{SAI_ACL_TABLE_ATTR_FIELD_DST_MAC, 1}, 
-{SAI_ACL_ENTRY_ATTR_FIELD_IN_PORT, 1},
-{SAI_ACL_ENTRY_ATTR_FIELD_OUT_PORT, 1},
+    {SAI_ACL_TABLE_ATTR_FIELD_DST_MAC, 1},
+    {SAI_ACL_TABLE_ATTR_FIELD_SRC_MAC, 1},
+    {SAI_ACL_TABLE_ATTR_FIELD_ETHER_TYPE, 1},
+    {SAI_ACL_TABLE_ATTR_FIELD_IP_PROTOCOL, 1},
+    {SAI_ACL_TABLE_ATTR_FIELD_DST_IP, 1},
+    {SAI_ACL_TABLE_ATTR_FIELD_SRC_IP, 1},
+    {SAI_ACL_TABLE_ATTR_FIELD_L4_DST_PORT, 1},
+    {SAI_ACL_TABLE_ATTR_FIELD_L4_SRC_PORT, 1},
+    {SAI_ACL_TABLE_ATTR_FIELD_RANGE, 1},
+    {SAI_ACL_TABLE_ATTR_FIELD_IN_PORTS, 1},
+    {SAI_ACL_TABLE_ATTR_FIELD_IN_PORT, 1},
+    {SAI_ACL_TABLE_ATTR_FIELD_OUT_PORT, 1}
 };
 
 typedef enum AclType_s {
 	Acl_ingress,
 	Acl_egress,
 	COPP,
-}AclType;
+} AclType;
 
 typedef struct AclGlobalData_s {
 	sai_object_id_t ingress_table_id;
 	sai_object_id_t egress_table_id;
 	AclType 	aclType;
-}AclGlobalData;
+} AclGlobalData;
 
+typedef struct AclEntryData_s {
+    char* aclRuleName;
+    sai_object_id_t acl_entry_id;
+    sai_object_id_t acl_range_id;
+    int used;
+} AclEntryData;
 
+typedef struct AclTableData_s {
+    char* aclName;
+    sai_object_id_t acl_table_id;
+    AclEntryData entryIdList[ACL_TABLE_SIZE];
+    int direction;
+    int* portList;
+    int length;
+    int used;
+} AclTableData;
 
 int SaiCoPPInit();
 int SaiCoPPConfig();

@@ -113,9 +113,7 @@ func main() {
 	go sigHandler(dbHdl, pluginMgr)
 	//Start dev shell
 	for _, plugin := range cfgFileInfo.pluginList {
-		if plugin == "opennsl" {
-			go DevShell(pluginMgr)
-		} else if plugin == "bcmsdk" {
+		if plugin == "sai" {
 			go DevShell(pluginMgr)
 		}
 	}

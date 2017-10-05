@@ -10,8 +10,13 @@ COMP_NAME = asicd
 #Set default paths
 PARAMSDIR = $(DESTDIR)/params
 DESTDIR = $(SR_CODE_BASE)/snaproute/src/out/bin
+BCMDIR = $(SR_CODE_BASE)/snaproute/src/bin-AsicdBcm
 PLUGIN_MGR_DIR = $(SR_CODE_BASE)/snaproute/src/asicd/pluginManager
-OPENNSL_DRIVER_DIR = $(PLUGIN_MGR_DIR)/opennsl/
+DRIVER_DIR = $(BCMDIR)/$(BUILD_TARGET)/lib
+OPENNSL_DRIVER_DIR = $(DRIVER_DIR)
+OPENNSL_HEADER_DIR = $(BCMDIR)/$(BUILD_TARGET)/opennsl/include
+SAI_DRIVER_DIR = $(DRIVER_DIR)
+SAI_HEADER_DIR = $(BCMDIR)/$(BUILD_TARGET)/sai/include/sai
 SR_VENDORS = $(SR_CODE_BASE)/snaproute/src/vendors
 
 #Set default build target
@@ -49,6 +54,15 @@ else ifeq ($(BUILD_TARGET), mlnx)
 export CGO_CFLAGS+=-I$(SR_VENDORS)/sai/mlnx
 	SAI_TARGET = none
 	SAI_BUILD = false
+else ifeq ($(BUILD_TARGET), ingrasys_s9100)
+export CGO_CFLAGS+= -I$(OPENNSL_HEADER_DIR) -DINCLUDE_L3
+export CGO_LDFLAGS+= -L$(OPENNSL_DRIVER_DIR) -lopennsl
+export CGO_CFLAGS+= -I$(SAI_HEADER_DIR) -DSAI_BUILD
+export CGO_LDFLAGS+= -L$(SAI_DRIVER_DIR) -lsai
+	SAI_TARGET = none
+	SAI_LIBS = $(DRIVER_DIR)/*
+	SAI_BUILD = true
+	#OPENNSL_BUILD = true
 endif
 
 #Targets
@@ -59,13 +73,18 @@ ipc:
 
 exe:
 	bash makeSymLinks.sh $(SAI_TARGET) $(OPENNSL_TARGET) $(BCMSDK_TARGET)
-	go build -o $(DESTDIR)/$(COMP_NAME) -ldflags="$(GOLDFLAGS):$(PLUGIN_MGR_DIR)/opennsl:$(PLUGIN_MGR_DIR)/sai/mlnx/libs:$(PLUGIN_MGR_DIR)/sai/bfoot/libs:$(PLUGIN_MGR_DIR)/bcmsdk"
+	go build -o $(DESTDIR)/$(COMP_NAME) -ldflags="$(GOLDFLAGS):$(OPENNSL_DRIVER_DIR):$(PLUGIN_MGR_DIR)/opennsl:$(PLUGIN_MGR_DIR)/sai/mlnx/libs:$(PLUGIN_MGR_DIR)/sai/bfoot/libs:$(PLUGIN_MGR_DIR)/bcmsdk"
 
 install:
 	$(MKDIR) $(PARAMSDIR)
 	install params/asicdConf.json $(PARAMSDIR)/
 ifeq ($(SAI_BUILD), true)
+	$(CP_R) $(BCMDIR)/$(BUILD_TARGET)/kmod/*.ko $(DESTDIR)/kmod/
 	$(CP_R) $(SAI_LIBS) $(DESTDIR)/sharedlib
+endif
+ifeq ($(OPENNSL_BUILD), true)
+	$(CP_R) $(BCMDIR)/$(BUILD_TARGET)/kmod/*.ko $(DESTDIR)/kmod/
+	$(CP_R) $(BCMDIR)/$(BUILD_TARGET)/lib/libopennsl.so.1 $(DESTDIR)/sharedlib/
 endif
 	$(CP_R) $(PLUGIN_MGR_DIR)/pluginCommon/utils/libhash.so.1 $(DESTDIR)/sharedlib
 

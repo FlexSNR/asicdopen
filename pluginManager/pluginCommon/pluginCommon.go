@@ -256,6 +256,7 @@ var IfType map[int]string = map[int]string{
 	int(C.PortIfTypeGMII):   "GMII",
 	int(C.PortIfTypeSGMII):  "SGMII",
 	int(C.PortIfTypeQSGMII): "QSGMII",
+	int(C.PortIfTypeXGMII):  "XGMII",
 	int(C.PortIfTypeSFI):    "SFI",
 	int(C.PortIfTypeXFI):    "XFI",
 	int(C.PortIfTypeXAUI):   "XAUI",
@@ -320,6 +321,7 @@ const (
 	NOTIFY_MPLSINTF_CREATE
 	NOTIFY_MPLSINTF_DELETE
 	NOTIFY_PORT_CONFIG_MODE_CHANGE
+	NOTIFY_PORT_ATTR_CHANGE
 	NOTIFY_PORT_CONFIG_MTU_CHANGE
 )
 
@@ -399,7 +401,14 @@ type PortConfigModeChgNotifyMsg struct {
 	OldMode string
 	NewMode string
 }
-type PortConfigMtuChangeNotifyMsg struct {
+type PortAttrChangeNotifyMsg struct {
+	IfIndex     int32
+	Mtu         int32
+	Description string
+	Pvid        int32
+	AttrMask    int32
+}
+type PortConfigMtuChgNotifyMsg struct {
 	IfIndex int32
 	Mtu     int32
 }
@@ -666,6 +675,7 @@ type PluginIPNeighborInfo struct {
 type PluginLagInfo struct {
 	IfName     string
 	HwId       *int
+	VlanId     *int
 	HashType   int
 	MemberList []int32
 }

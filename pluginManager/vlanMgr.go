@@ -266,6 +266,56 @@ func (vMgr *VlanManager) ValidateVlanConfig(vlanId int, ifIndexList, untagIfInde
 	return ok, err
 }
 
+func (vMgr *VlanManager) CreateLagVlan(vlanObj *asicdServices.Vlan) (bool, error) {
+	var vlanId int = int(vlanObj.VlanId)
+	ifIndexList, _ := vMgr.parseIntfStrListToIfIndexList(vlanObj.IntfList)
+	untagIfIndexList, _ := vMgr.parseIntfStrListToIfIndexList(vlanObj.UntagIntfList)
+
+	portList := vMgr.ConvertIfIndexListToPortList(ifIndexList)
+	untagPortList := vMgr.ConvertIfIndexListToPortList(untagIfIndexList)
+	if false == arePortListsMutuallyExclusive(portList, untagPortList) {
+		return false, errors.New("Failed to create LAG vlan. IntfList, UntagIntfList need to contain mutually exclusive port lists")
+	}
+
+	//Set pvid for all untagged ports
+	vMgr.portMgr.SetPvidForIfIndexList(vlanId, untagIfIndexList)
+	//Set port mode to L2 only if this is not an internal vlan
+	if !((vlanId >= vMgr.sysRsvdVlanMin) && (vlanId <= vMgr.sysRsvdVlanMax)) {
+		vMgr.portMgr.SetPortConfigMode(pluginCommon.PORT_MODE_L2, append(ifIndexList, untagIfIndexList...))
+	}
+	//Create list of ports, lags from ifindex list
+	ports, lags := GetPortLagIdsFromVlanIfIndexList(ifIndexList)
+	activePortCount := vMgr.portMgr.GetActiveIntfCountFromIfIndexList(ports)
+	activeLagCount := vMgr.lagMgr.GetActiveLagCountFromLagList(lags)
+	ports, lags = GetPortLagIdsFromVlanIfIndexList(untagIfIndexList)
+	activePortCount += vMgr.portMgr.GetActiveIntfCountFromIfIndexList(ports)
+	activeLagCount += vMgr.lagMgr.GetActiveLagCountFromLagList(lags)
+	//Update SW cache
+	vlanName := pluginCommon.SVI_PREFIX + strconv.Itoa(vlanId)
+	vlanIfIndex := vMgr.ifMgr.AllocateIfIndex(vlanName, vlanId, commonDefs.IfTypeVlan)
+	var state string
+	if (activePortCount+activeLagCount > 0) && (vlanObj.AdminState != INTF_STATE_DOWN) {
+		state = INTF_STATE_UP
+	} else {
+		state = INTF_STATE_DOWN
+	}
+	vMgr.dbMutex.Lock()
+	vMgr.vlanDB[vlanId] = &vlanInfo{
+		adminState:       vlanObj.AdminState,
+		operState:        state,
+		vlanId:           vlanId,
+		ifIndex:          vlanIfIndex,
+		vlanName:         vlanName,
+		activeIntfCount:  activePortCount + activeLagCount,
+		ifIndexList:      ifIndexList,
+		untagIfIndexList: untagIfIndexList,
+	}
+	vMgr.dbMutex.Unlock()
+	//Publish notification - ARPd listens to vlan create notification
+	vMgr.publishVlanCfgChgNotification(pluginCommon.NOTIFY_VLAN_CREATE, vlanId, vlanIfIndex, ifIndexList, untagIfIndexList)
+	return true, nil
+}
+
 func (vMgr *VlanManager) CreateVlan(vlanObj *asicdServices.Vlan) (int, bool, error) {
 	var vlanId int = int(vlanObj.VlanId)
 	if (vlanId < pluginCommon.SYS_RSVD_VLAN) || (vlanId > pluginCommon.MAX_VLAN_ID) ||
@@ -361,6 +411,49 @@ func (vMgr *VlanManager) CreateVlan(vlanObj *asicdServices.Vlan) (int, bool, err
 	//Publish notification - ARPd listens to vlan create notification
 	vMgr.publishVlanCfgChgNotification(pluginCommon.NOTIFY_VLAN_CREATE, vlanId, vlanIfIndex, ifIndexList, untagIfIndexList)
 	return vlanId, true, nil
+}
+
+func (vMgr *VlanManager) DeleteLagVlan(vlanObj *asicdServices.Vlan) (bool, error) {
+	var vlanId int = int(vlanObj.VlanId)
+	vMgr.logger.Info("DeleteLagVlan Vlan id for delete = " + strconv.Itoa(vlanId))
+	if (vlanId < pluginCommon.SYS_RSVD_VLAN) || (vlanId > pluginCommon.MAX_VLAN_ID) ||
+		((vlanId > vMgr.sysRsvdVlanMin) && (vlanId < vMgr.sysRsvdVlanMax)) {
+		return false, errors.New("Invalid vlan id specified during vlan delete")
+	}
+	ifIndexList, err := vMgr.parseIntfStrListToIfIndexList(vlanObj.IntfList)
+	if err != nil {
+		return false, errors.New("Failed to map intf list string to ifindex list")
+	}
+	untagIfIndexList, err := vMgr.parseIntfStrListToIfIndexList(vlanObj.UntagIntfList)
+	if err != nil {
+		return false, errors.New("Failed to map untagged intf list string to ifindex list")
+	}
+	rsvd_vid := false
+	if vlanId == pluginCommon.SYS_RSVD_VLAN {
+		//Lookup system reserved vlans
+		rsvd_vid = true
+		vlanId = vMgr.GetSysVlanContainingIf(untagIfIndexList[0])
+		if vlanId == -1 {
+			return false, errors.New("Unable to locate system reserved vlan that contains port")
+		}
+	}
+	//Update SW cache
+	vMgr.dbMutex.Lock()
+	vlanIfIndex := vMgr.vlanDB[vlanId].ifIndex
+	vMgr.vlanDB[vlanId] = nil
+	vMgr.dbMutex.Unlock()
+	//Update pvid for untagged ports
+	vMgr.portMgr.SetPvidForIfIndexList(pluginCommon.DEFAULT_VLAN_ID, untagIfIndexList)
+	//Restore port mode only if this is not an internal vlan
+	if !((vlanId >= vMgr.sysRsvdVlanMin) && (vlanId <= vMgr.sysRsvdVlanMax)) {
+		vMgr.portMgr.SetPortConfigMode(pluginCommon.PORT_MODE_UNCONFIGURED, append(ifIndexList, untagIfIndexList...))
+	}
+	//Publish notification - ARPd listens to vlan delete notification
+	if rsvd_vid == true {
+		return true, nil
+	}
+	vMgr.publishVlanCfgChgNotification(pluginCommon.NOTIFY_VLAN_DELETE, vlanId, vlanIfIndex, ifIndexList, untagIfIndexList)
+	return true, nil
 }
 
 func (vMgr *VlanManager) DeleteVlan(vlanObj *asicdServices.Vlan) (int, bool, error) {

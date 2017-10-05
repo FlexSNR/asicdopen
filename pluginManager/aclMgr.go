@@ -30,6 +30,7 @@ import (
 	"fmt"
 	"models/objects"
 	"net"
+	"reflect"
 	"strings"
 	"sync"
 	"syscall"
@@ -103,8 +104,8 @@ func (aMgr *AclManager) RestoreAclRuleDB(dbHdl *dbutils.DBUtil) {
 			obj := asicdServices.NewAclRule()
 			dbObj := aclRules[idx].(objects.AclRule)
 			objects.ConvertasicdAclRuleObjToThrift(&dbObj, obj)
-			rv := aMgr.CreateAclRuleConfig(obj, ACL_CLIENT_CFG)
-			if rv != 0 {
+			rv, _ := aMgr.CreateAclRuleConfig(obj, ACL_CLIENT_CFG)
+			if rv != true {
 				aMgr.logger.Err("Acl : Restart Failed to create acl rule ", obj.RuleName)
 			}
 
@@ -122,8 +123,8 @@ func (aMgr *AclManager) RestoreAclDB(dbHdl *dbutils.DBUtil) {
 			obj := asicdServices.NewAcl()
 			dbObj := acls[idx].(objects.Acl)
 			objects.ConvertasicdAclObjToThrift(&dbObj, obj)
-			rv := aMgr.CreateAclConfig(obj, ACL_CLIENT_CFG)
-			if rv != 0 {
+			rv, _ := aMgr.CreateAclConfig(obj, ACL_CLIENT_CFG)
+			if rv != false {
 				aMgr.logger.Err("Acl : Restart Failed to create acl ", obj.AclName)
 			}
 
@@ -136,46 +137,54 @@ func (aMgr *AclManager) RestoreAclDB(dbHdl *dbutils.DBUtil) {
 func (aMgr *AclManager) Deinit() {
 }
 
-func (aMgr *AclManager) CreateAclConfig(acl *asicdServices.Acl, clientName string) int {
-	aMgr.logger.Debug("ACL: Received acl config create ", acl, " client ", clientName)
+func (aMgr *AclManager) CreateAclConfig(acl *asicdServices.Acl, clientName string) (bool, error) {
+	aMgr.logger.Debug("Acl: Received acl config create ", acl, " client ", clientName)
 	if !aMgr.initComplete {
 		aMgr.logger.Err("Acl : Acl manager not initialized yet.. Not applied ", acl.AclName)
-		return -1
+		return false, errors.New("ACL isn't initialized yet")
 	}
+
 	if aMgr.dbHdl == nil {
 		aMgr.logger.Err("Null db handle. Failed to apply ACl.")
-		return -1
+		return false, errors.New("Can't connect to DB")
 	}
 
 	if len(acl.RuleNameList) == 0 {
-		aMgr.logger.Err("Acl rule list is nil . Dont apply ifIndex ")
-		return -1
+		aMgr.logger.Info("Acl rule list is nil . Dont apply ifIndex ")
+		return false, errors.New("Rule list can't be empty")
 	}
-	/*	if len(acl.IntfList) == 0 {
-		aMgr.logger.Err("Acl intf list is nil .Rule is not applied to any port :", acl)
-		return -1
-	} */
+
+	if len(acl.IntfList) == 0 {
+		aMgr.logger.Info("Acl intf list is nil .Rule is not applied to any port :", acl)
+		return false, errors.New("Intf List can't be empty")
+	}
+
+	// Bcm no support ACL apply in egress
+	if acl.Direction == "OUT" {
+		return false, errors.New("Not yet support ACL Direction(OUT)")
+	}
+
 	if _, ok := aMgr.aclKeyToRulesMap[acl.AclName]; !ok {
 		aMgr.aclKeyToRulesMap[acl.AclName] = make([]string, 0)
 	}
+
 	for _, rule := range acl.RuleNameList {
 		rv := aMgr.processRuleFromAcl(acl, rule)
 		if rv < 0 {
 			aMgr.logger.Err("Acl : Failed to process acl rule from acl ", acl)
-			return -1
+			return false, errors.New(fmt.Sprintln("Failed to process acl rule ", rule))
 		}
 		rv = aMgr.addAclToDb(acl)
 		if rv < 0 {
 			aMgr.logger.Err("Acl: Failed to process acl rule ",
 				rule, " acl ", acl)
-			return -1
+			return false, errors.New("Failed to save acl to DB")
 		}
 
 	}
-
-	return 0
-
+	return true, nil
 }
+
 func (aMgr *AclManager) processRuleFromAcl(acl *asicdServices.Acl, rule string) int {
 	aMgr.ruleToAclKeyMap[rule] = append(aMgr.ruleToAclKeyMap[rule], acl.AclName)
 	aMgr.aclKeyToRulesMap[acl.AclName] = append(aMgr.aclKeyToRulesMap[rule], rule)
@@ -186,7 +195,7 @@ func (aMgr *AclManager) processRuleFromAcl(acl *asicdServices.Acl, rule string) 
 	key := "AclRule#" + rule
 	obj, err := aMgr.dbHdl.GetObjectFromDb(ruleDbObj, key)
 	if err != nil {
-		aMgr.logger.Debug("Failed to get object from db for rule name. Rule will not be applied  ", rule)
+		aMgr.logger.Debug("Acl: Failed to get object from db for rule name. Rule will not be applied  ", rule)
 		return -1
 	}
 	ruleTemp := obj.(objects.AclRule)
@@ -202,26 +211,25 @@ func (aMgr *AclManager) processRuleFromAcl(acl *asicdServices.Acl, rule string) 
 	for _, intf := range acl.IntfList {
 		ifIndex, err := aMgr.ifMgr.GetIfIndexForIfName(intf)
 		if err != nil {
-			aMgr.logger.Err("ACL: Invalid ifname . ", intf)
+			aMgr.logger.Err("Acl: Invalid ifname . ", intf)
 			return -1
 		}
 		port := aMgr.pMgr.GetPortNumFromIfIndex(ifIndex)
 		aMgr.logger.Debug("Acl: Ifindex - port ", ifIndex, port)
 		portList = append(portList, port)
-		aMgr.logger.Debug("ACL: added port to the list intf , ifIndex, port ", intf, ifIndex, port)
+		aMgr.logger.Debug("Acl: added port to the list intf , ifIndex, port ", intf, ifIndex, port)
 	}
+
 	for _, plugin := range aMgr.plugins {
-		ruleName := /*acl.AclName + ":" +*/ rule
-		rv := plugin.CreateAclConfig(ruleName, acl.AclType, *aclRule, portList, acl.Direction)
-		aMgr.logger.Debug("Acl: Call plugin createAcl config API ", ruleName)
+		rv := plugin.CreateAclConfig(acl.AclName, acl.AclType, *aclRule, portList, acl.Direction)
+		aMgr.logger.Debug("Acl: Call plugin createAcl config API ", acl.AclName)
 		if rv < 0 {
-			aMgr.logger.Err("Acl: Failed to create Acl config ", ruleName, " - ", rv)
+			aMgr.logger.Err("Acl: Failed to create Acl config ", acl.AclName, " - ", rv)
 			return rv
 		}
 		aMgr.UpdateAclRuleStateSlice(ruleObj, ACL_RULE_UPDATE, acl.AclName, acl.AclType, 0, "Applied")
 	}
 	return 0
-
 }
 
 func (aMgr *AclManager) addAclToDb(acl *asicdServices.Acl) int {
@@ -253,11 +261,11 @@ func (aMgr *AclManager) ValidateAcl(aclName string, ifIndex int32) int {
 	return ACL_VALID
 }
 
-func (aMgr *AclManager) CreateAclRuleConfig(aclRule *asicdServices.AclRule, aclClient string) int {
-	aMgr.logger.Debug("Acl : Received create Acl rule config aclRule", aclRule)
+func (aMgr *AclManager) CreateAclRuleConfig(aclRule *asicdServices.AclRule, aclClient string) (bool, error) {
+	aMgr.logger.Debug("Acl : Received create Acl rule config aclRule", aclRule, " client ", aclClient)
 	if !aMgr.initComplete {
-		aMgr.logger.Err("Acl : Acl manager not initialized yet..")
-		return -1
+		aMgr.logger.Err("Acl : Acl manager not initialized yet.")
+		return false, errors.New("ACL isn't initialized yet")
 	}
 	if _, ok := aMgr.ruleToAclKeyMap[aclRule.RuleName]; !ok {
 		aMgr.ruleToAclKeyMap[aclRule.RuleName] = []string{}
@@ -267,46 +275,119 @@ func (aMgr *AclManager) CreateAclRuleConfig(aclRule *asicdServices.AclRule, aclC
 		var dbObj objects.AclRule
 		if aMgr.dbHdl == nil {
 			aMgr.logger.Err("Acl: Dbhdl is nil. Acl rule will not be stored in db. ", aclRule)
-			return -1
+			return false, errors.New("Can't connect to DB")
 		}
 
 		objects.ConvertThriftToasicdAclRuleObj(aclRule, &dbObj)
 		err := dbObj.StoreObjectInDb(aMgr.dbHdl)
 		if err != nil {
 			aMgr.logger.Err("Acl: Failed to save the rule in redis db. , acl rule ", aclRule, " err ", err)
-			return -1
+			return false, errors.New("Can't save data to DB")
 		}
 		aMgr.logger.Debug("Acl : successfully saved rule in redis db ", aclRule)
 	}
 	aMgr.UpdateAclRuleStateSlice(aclRule, ACL_RULE_ADD, "NONE", "NONE", 0, "Not Applied")
-	return 0
+	return true, nil
 }
 
-func (aMgr *AclManager) DeleteAcl(aclName string) error {
-	ruleNames, ok := aMgr.aclKeyToRulesMap[aclName]
+func (aMgr *AclManager) UpdateAclRuleConfig(oldAclRule, newAclRule *asicdServices.AclRule, attrset []bool) (bool, error) {
+	acls, ok := aMgr.ruleToAclKeyMap[oldAclRule.RuleName]
 	if ok {
-		if len(ruleNames) > 1 {
-			return errors.New(fmt.Sprintln("Remove the acl rules attached to Acls first . Failed to delete. ", aclName))
-		} else {
-			delete(aMgr.aclToIfIndexMap, aclName)
-			delete(aMgr.aclKeyToRulesMap, aclName)
-			// delete data from redis db
+		aclRule, err := aMgr.GetPluginAclRuleObjFromThriftObj(newAclRule)
+		if err != nil {
+			aMgr.logger.Err("Acl: Failed to convert thrift acl rule obj to common obj.Will still try to apply other rules ", newAclRule)
+			return false, nil
+		}
+		for _, acl := range acls {
+			for _, plugin := range aMgr.plugins {
+				rv := plugin.UpdateAclRule(acl, *aclRule)
+				aMgr.logger.Debug("Acl: Call plugin update Acl rule ", newAclRule.RuleName)
+				if rv < 0 {
+					aMgr.logger.Err("Acl: Failed to update Acl rule ", newAclRule.RuleName)
+					return false, errors.New(fmt.Sprintln("Failed to update. ", newAclRule.RuleName))
+				}
+			}
 		}
 	} else {
-		aMgr.logger.Err(fmt.Sprintln("Acl : Delete - not found in the map. failed for acl ", aclName))
-		return errors.New(fmt.Sprintln("Acl not found . ", aclName))
+		return false, errors.New(fmt.Sprintln("Acl rule does not exist ", oldAclRule.RuleName))
 	}
-	return nil
+	return true, nil
+}
+
+func (aMgr *AclManager) DeleteAcl(acl *asicdServices.Acl) (bool, error) {
+	aclName := acl.AclName
+	_, ok := aMgr.aclKeyToRulesMap[aclName]
+	if ok {
+		for _, plugin := range aMgr.plugins {
+			rv := plugin.DeleteAcl(aclName, acl.Direction)
+			aMgr.logger.Debug("Acl: Call plugin delete Acl ", aclName)
+			if rv < 0 {
+				aMgr.logger.Err("Acl: Failed to delete Acl ", aclName)
+				return false, errors.New(fmt.Sprintln("Failed to delete. ", aclName))
+			}
+		}
+		delete(aMgr.aclToIfIndexMap, aclName)
+		delete(aMgr.aclKeyToRulesMap, aclName)
+		// delete data from redis db
+	} else {
+		aMgr.logger.Err(fmt.Sprintln("Acl : Delete - not found in the map. failed for acl ", aclName))
+		return false, errors.New(fmt.Sprintln("Acl not found . ", aclName))
+	}
+	return true, nil
+}
+
+func (aMgr *AclManager) DeleteAclRuleFromAcl(acl *asicdServices.Acl, rule string) (bool, error) {
+
+	var ruleDbObj objects.AclRule
+	ruleObj := asicdServices.NewAclRule()
+	key := "AclRule#" + rule
+	obj, err := aMgr.dbHdl.GetObjectFromDb(ruleDbObj, key)
+	if err != nil {
+		aMgr.logger.Debug("Acl: Failed to get object from db for rule name. Rule will not be applied  ", rule)
+		return false, nil
+	}
+	ruleTemp := obj.(objects.AclRule)
+	objects.ConvertasicdAclRuleObjToThrift(&ruleTemp, ruleObj)
+	aMgr.logger.Debug("Obtained the db obj as ", ruleObj)
+	aclRule, err := aMgr.GetPluginAclRuleObjFromThriftObj(ruleObj)
+	if err != nil {
+		aMgr.logger.Err("Acl: Failed to convert thrift acl rule obj to common obj.Will still try to apply other rules ", ruleObj)
+		return false, nil
+	}
+
+	portList := []int32{}
+	for _, intf := range acl.IntfList {
+		ifIndex, err := aMgr.ifMgr.GetIfIndexForIfName(intf)
+		if err != nil {
+			aMgr.logger.Err("Acl: Invalid ifname . ", intf)
+			return false, nil
+		}
+		port := aMgr.pMgr.GetPortNumFromIfIndex(ifIndex)
+		aMgr.logger.Debug("Acl: Ifindex - port ", ifIndex, port)
+		portList = append(portList, port)
+		aMgr.logger.Debug("Acl: added port to the list intf , ifIndex, port ", intf, ifIndex, port)
+	}
+
+	for _, plugin := range aMgr.plugins {
+		rv := plugin.DeleteAclRuleFromAcl(acl.AclName, *aclRule, portList, acl.Direction)
+		aMgr.logger.Debug("Acl: Call plugin delete AclRule ", rule, " from ", acl.AclName)
+		if rv < 0 {
+			aMgr.logger.Err("Acl: Failed to delete AclRule ", rule)
+			return false, errors.New(fmt.Sprintln("Failed to delete. ", rule))
+		}
+	}
+	return true, nil
 }
 
 /* Allow to delete acl rule only if it
 is not attached to any Acl.
 */
-func (aMgr *AclManager) DeleteAclRule(ruleName string) error {
+func (aMgr *AclManager) DeleteAclRule(aclRuleObj *asicdServices.AclRule) (bool, error) {
+	ruleName := aclRuleObj.RuleName
 	acls, ok := aMgr.ruleToAclKeyMap[ruleName]
 	if ok {
 		if len(acls) > 0 {
-			return errors.New(fmt.Sprintln("Acl rule is still attached to acl(s). Remove from acl first. ", acls))
+			return false, errors.New(fmt.Sprintln("Acl rule is still attached to acl(s). Remove from acl first. ", acls))
 		}
 		delete(aMgr.ruleToAclKeyMap, ruleName)
 		delete(aMgr.aclRuleStateMap, ruleName)
@@ -318,9 +399,9 @@ func (aMgr *AclManager) DeleteAclRule(ruleName string) error {
 		}
 
 	} else {
-		return errors.New(fmt.Sprintln("Acl rule does not exist ", ruleName))
+		return false, errors.New(fmt.Sprintln("Acl rule does not exist ", ruleName))
 	}
-	return errors.New("Success")
+	return true, nil
 }
 
 func (aMgr *AclManager) DeleteAclRuleFromAclMap(aclName string, ruleName string) int {
@@ -344,10 +425,14 @@ func (aMgr *AclManager) DeleteAclRuleFromAclMap(aclName string, ruleName string)
  * If aclRule is not attached to any acl
  * delete it from hardware.
  */
-func (aMgr *AclManager) UpdateAcl(aclOld *asicdServices.Acl, aclNew *asicdServices.Acl) error {
+func (aMgr *AclManager) UpdateAcl(aclOld *asicdServices.Acl, aclNew *asicdServices.Acl) (bool, error) {
 	_, ok := aMgr.aclKeyToRulesMap[aclOld.AclName]
 	aMgr.logger.Debug("Acl: Acl update old acl ", aclOld, " new acl ", aclNew)
 	if ok {
+		// Port list has been changed
+		if !reflect.DeepEqual(aclOld.IntfList, aclNew.IntfList) {
+			return false, errors.New("No support to change IntfList")
+		}
 		// find newly created rules
 		for _, ruleName := range aclNew.RuleNameList {
 			newRule := true
@@ -363,7 +448,7 @@ func (aMgr *AclManager) UpdateAcl(aclOld *asicdServices.Acl, aclNew *asicdServic
 				if rv < 0 {
 					aMgr.logger.Err("Acl : Update acl - failed to create new rule",
 						ruleName, " acl ", aclNew)
-					return errors.New(fmt.Sprintln("Failed to create new rule ", ruleName))
+					return false, errors.New(fmt.Sprintln("Failed to create new rule ", ruleName))
 				}
 			}
 		}
@@ -382,17 +467,17 @@ func (aMgr *AclManager) UpdateAcl(aclOld *asicdServices.Acl, aclNew *asicdServic
 				if rv < 0 {
 					aMgr.logger.Err(fmt.Sprintln("Acl : Failed to delete from s/w cache ", aclNew.AclName, ":", oldRuleName))
 				}
-				err := aMgr.DeleteAcl(oldRuleName)
+				_, err := aMgr.DeleteAclRuleFromAcl(aclOld, oldRuleName)
 				if err != nil {
-					return errors.New(fmt.Sprintln("Acl : Failed to delete rule ", oldRuleName,
+					return false, errors.New(fmt.Sprintln("Acl : Failed to delete rule ", oldRuleName,
 						"acl ", aclNew))
 				}
 			}
 		}
 	} else {
-		return errors.New(fmt.Sprintln("Acl doest not exist. ", aclOld.AclName))
+		return false, errors.New(fmt.Sprintln("Acl doest not exist. ", aclOld.AclName))
 	}
-	return nil
+	return true, nil
 }
 
 func (aMgr *AclManager) GetPortListFromIntfList(intfList []string) (portList []int32, err error) {

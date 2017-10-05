@@ -24,6 +24,7 @@
 package pluginManager
 
 import (
+	"asicd/pluginManager/pluginCommon"
 	"errors"
 	"utils/logging"
 )
@@ -48,6 +49,22 @@ func (sMgr *StpManager) Deinit() {
 }
 
 func (sMgr *StpManager) CreateStg(vlanList []int32) (stgId int32, err error) {
+	// Replace default VLAN. In stpd, the deafult vlan is 0
+	dupFlag := 0
+	index := -1
+	for i, vlanId := range vlanList {
+		if vlanId == pluginCommon.DEFAULT_VLAN_ID {
+			dupFlag = 1
+		}
+		if vlanId == 0 {
+			index = i
+			vlanList[i] = pluginCommon.DEFAULT_VLAN_ID
+		}
+	}
+	if index != -1 && dupFlag == 1 {
+		vlanList = append(vlanList[:index], vlanList[index+1:]...)
+	}
+
 	for _, plugin := range sMgr.plugins {
 		if isPluginAsicDriver(plugin) == true {
 			rv := plugin.CreateStg(vlanList)
@@ -107,6 +124,21 @@ func (sMgr *StpManager) GetPortStpState(stgId, portIfIndex int32) (stpState int3
 }
 
 func (sMgr *StpManager) UpdateStgVlanList(stgId int32, vlanList []int32) (bool, error) {
+	// Replace default VLAN. In stpd, the deafult vlan is 0
+	dupFlag := 0
+	index := -1
+	for i, vlanId := range vlanList {
+		if vlanId == pluginCommon.DEFAULT_VLAN_ID {
+			dupFlag = 1
+		}
+		if vlanId == 0 {
+			index = i
+			vlanList[i] = pluginCommon.DEFAULT_VLAN_ID
+		}
+	}
+	if index != -1 && dupFlag == 1 {
+		vlanList = append(vlanList[:index], vlanList[index+1:]...)
+	}
 	for _, plugin := range sMgr.plugins {
 		if isPluginAsicDriver(plugin) == true {
 			rv := plugin.UpdateStgVlanList(stgId, nil, vlanList)
@@ -121,7 +153,11 @@ func (sMgr *StpManager) UpdateStgVlanList(stgId int32, vlanList []int32) (bool, 
 }
 
 func (sMgr *StpManager) FlushFdbStgGroup(stgId, portIfIndex int32) error {
-	port := sMgr.portMgr.GetPortNumFromIfIndex(portIfIndex)
+	var port int32
+	port = -1
+	if portIfIndex != -1 {
+		port = sMgr.portMgr.GetPortNumFromIfIndex(portIfIndex)
+	}
 	for _, plugin := range sMgr.plugins {
 		if isPluginAsicDriver(plugin) == true {
 			plugin.FlushFdbStgGroup(sMgr.stgVlanMap[stgId], port)

@@ -412,12 +412,12 @@ func (mgr *IPv4NeighborInfo) UpdateNbrDb(nbrInfo *pluginCommon.PluginIPNeighborI
 			nbrInfo.OperationType == NH_GROUP_CREATE_OPERATION ||
 			nbrInfo.OperationType == NH_GROUP_UPDATE_OPERATION {
 			NeighborMgr.ipv4NeighborDBKeys = append(NeighborMgr.ipv4NeighborDBKeys, nbrInfo.IpAddr[0])
+			//Update cross reference map used for mac move lookups by appending new ip' only when
+			//arp or ndp is doing nbr entry create
+			NeighborMgr.macAddrToIPNbrXref[nbrInfo.MacAddr.String()] =
+				append(NeighborMgr.macAddrToIPNbrXref[nbrInfo.MacAddr.String()],
+					nbrInfo.IpAddr[0])
 		}
-		//Update cross reference map used for mac move lookups by appending new ip' only when
-		//arp or ndp is doing nbr entry create
-		NeighborMgr.macAddrToIPNbrXref[nbrInfo.MacAddr.String()] =
-			append(NeighborMgr.macAddrToIPNbrXref[nbrInfo.MacAddr.String()],
-				nbrInfo.IpAddr[0])
 	}
 }
 

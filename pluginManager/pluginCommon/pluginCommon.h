@@ -5,8 +5,8 @@
 #define MAX_NUM_PORTS 256
 #define MAX_CMD_SIZE 128
 #define MAC_ADDR_LEN 6
-#define DEFAULT_VLAN_ID 4095
-#define CPU_VLAN_ID 4095
+#define DEFAULT_VLAN_ID 1
+#define CPU_VLAN_ID 1
 #define ALL_INTERFACES -1
 #define NETIF_NAME_LEN_MAX 16
 #define BOOT_MODE_COLDBOOT 0
@@ -51,6 +51,7 @@
 #define IFINDEX_FROM_IF_ID_TYPE(id, type) ((id & INTF_ID_MASK)|((type << INTF_TYPE_SHIFT) & INTF_TYPE_MASK))
 #define MAX_NEXTHOPS_PER_ECMP_ROUTE 32
 #define VXLAN_UDP_DEST_PORT 4789
+#define MAX_LOOPBACK_INTFS 512
 
 //Global consts
 #define MAX_VENDOR_ID_LEN 32
@@ -173,6 +174,7 @@ enum portIfType {
     PortIfTypeGMII,
     PortIfTypeSGMII,
     PortIfTypeQSGMII,
+    PortIfTypeXGMII,
     PortIfTypeSFI,
     PortIfTypeXFI,
     PortIfTypeXAUI,
@@ -289,7 +291,7 @@ enum coppClassTypes{
 	CoppStp,
 	CoppLacp,
 	CoppBfd,
-	CoppIcmpv6,  
+	CoppIcmpv6,
 	CoppLldp,
 	//CoppSsh,
 	//CoppHttp,
@@ -323,7 +325,7 @@ enum aclType{
 enum aclL4PortMatch {
 	AclEq = 0,
 	AclNeq,
-        AclRange
+    AclRange
 };
 
 typedef struct aclRule_t {
@@ -331,7 +333,7 @@ typedef struct aclRule_t {
 	int ruleIndex;
 	uint8_t* sourceMac;
 	uint8_t* destMac;
-	uint8_t * sourceIp;
+	uint8_t* sourceIp;
 	uint8_t* destIp;
 	uint8_t* sourceMask;
 	uint8_t* destMask;
@@ -344,7 +346,7 @@ typedef struct aclRule_t {
 	int   l4PortMatch;
 	int   l4MinPort;
 	int   l4MaxPort;
-}aclRule;
+} aclRule;
 
 typedef struct acl {
 char* aclName;

@@ -163,11 +163,16 @@ func (nMgr *NeighborManager) CreateIPNeighbor(ipAddr string, vlanId int, ifIndex
 			return errors.New("Abort neighbor add. Failed to retrieve system reserved vlan id")
 		}
 	}
-	//Get nexthop id for neighbor
-	err = nMgr.nextHopMgr.CreateNextHop(&nbrInfo)
-	if err != nil {
-		return errors.New("Failed to create next hop for neighbor")
-	}
+
+	// We exchange CreateNextHop and CreateIPNeighbor
+	// becasue CreateNextHop needs host table but add host to
+	// host table in CreateIPNeighbor
+	// Get nexthop id for neighbor
+	//err = nMgr.nextHopMgr.CreateNextHop(&nbrInfo)
+	//if err != nil {
+	//	return errors.New("Failed to create next hop for neighbor")
+	//}
+
 	//Update HW state
 	for _, plugin := range nMgr.plugins {
 		rv := plugin.CreateIPNeighbor(nbrInfo)
@@ -175,6 +180,13 @@ func (nMgr *NeighborManager) CreateIPNeighbor(ipAddr string, vlanId int, ifIndex
 			return errors.New("Plugin failed to create neighbor entry")
 		}
 	}
+
+	//Get nexthop id for neighbor
+	err = nMgr.nextHopMgr.CreateNextHop(&nbrInfo)
+	if err != nil {
+		return errors.New("Failed to create next hop for neighbor")
+	}
+
 	nbrObj.UpdateNbrDb(nbrInfo)
 	return nil
 }

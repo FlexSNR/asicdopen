@@ -1555,6 +1555,18 @@ func (v *SoftSwitchPlugin) CreateAclConfig(aclName string, aclType string, aclRu
 	return 1
 }
 
+func (v *SoftSwitchPlugin) DeleteAcl(aclName string, direction string) int {
+	return 1
+}
+
+func (v *SoftSwitchPlugin) UpdateAclRule(aclName string, acl pluginCommon.AclRule) int {
+	return 1
+}
+
+func (v *SoftSwitchPlugin) DeleteAclRuleFromAcl(aclName string, acl pluginCommon.AclRule, intfList []int32, direction string) int {
+	return 1
+}
+
 func (p *SoftSwitchPlugin) ClearPortStat(portNum int32) int {
 	return 0
 }
@@ -1572,5 +1584,12 @@ func (p *SoftSwitchPlugin) GetModuleInventory() *pluginCommon.Inventory {
 	return nil
 }
 func (p *SoftSwitchPlugin) UpdateAclStateDB(ruleName string) int {
+	return 0
+}
+
+func (p *SoftSwitchPlugin) CreateIPIntfLoopback(*pluginCommon.PluginIPInfo) int {
+	return 0
+}
+func (p *SoftSwitchPlugin) DeleteIPIntfLoopback(*pluginCommon.PluginIPInfo) int {
 	return 0
 }

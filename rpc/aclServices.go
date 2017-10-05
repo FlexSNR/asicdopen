@@ -31,59 +31,59 @@ import (
 )
 
 func (svcHdlr AsicDaemonServiceHandler) CreateAcl(aclObj *asicdServices.Acl) (bool, error) {
-	rv := svcHdlr.pluginMgr.CreateAclConfig(aclObj, "CONFIG")
+	rv, err := svcHdlr.pluginMgr.CreateAclConfig(aclObj, "CONFIG")
 	svcHdlr.logger.Debug(fmt.Sprintln("Thrift creatr Acl obj returning - ", rv))
-	return true, nil
+	return rv, err
 }
 
 func (svcHdlr AsicDaemonServiceHandler) CreateAclInternal(aclObj *asicdServices.Acl, clientInt string) (bool, error) {
-	rv := svcHdlr.pluginMgr.CreateAclConfig(aclObj, clientInt)
+	rv, err := svcHdlr.pluginMgr.CreateAclConfig(aclObj, clientInt)
 	svcHdlr.logger.Debug(fmt.Sprintln("Thrift creatr Acl obj returning - ", rv))
-	return true, nil
+	return rv, err
 }
 
 func (svcHdlr AsicDaemonServiceHandler) DeleteAcl(aclObj *asicdServices.Acl) (bool, error) {
 	svcHdlr.logger.Debug(fmt.Sprintln("Thrift request received to delete acl Obj - ", aclObj))
-	//rv, err := svcHdlr.pluginMgr.DeleteAclConfig(aclObj)
-	svcHdlr.logger.Debug(fmt.Sprintln("Thrift delete acl object - "))
-	return true, nil
+	rv, err := svcHdlr.pluginMgr.DeleteAcl(aclObj)
+	svcHdlr.logger.Debug(fmt.Sprintln("Thrift delete acl object - ", rv))
+	return rv, err
 
 }
 
 func (svcHdlr AsicDaemonServiceHandler) UpdateAcl(oldAclObj, newAclObj *asicdServices.Acl, attrset []bool, op []*asicdServices.PatchOpInfo) (bool, error) {
 	svcHdlr.logger.Debug(fmt.Sprintln("Received thrift request to update acl config : old, new -", oldAclObj, newAclObj))
-	//rv, err := svcHdlr.pluginMgr.UpdateAclConfig(oldAclObj, newAclObj, attrset)
-	svcHdlr.logger.Debug(fmt.Sprintln("Thrift update acl call returning -"))
-	return true, nil
+	rv, err := svcHdlr.pluginMgr.UpdateAcl(oldAclObj, newAclObj)
+	svcHdlr.logger.Debug(fmt.Sprintln("Thrift update acl call returning - ", rv))
+	return rv, err
 }
 
 func (svcHdlr AsicDaemonServiceHandler) CreateAclRule(aclRuleObj *asicdServices.AclRule) (bool, error) {
-	rv := svcHdlr.pluginMgr.CreateAclRuleConfig(aclRuleObj, "CONFIG")
+	rv, err := svcHdlr.pluginMgr.CreateAclRuleConfig(aclRuleObj, "CONFIG")
 	svcHdlr.logger.Debug(fmt.Sprintln("Thrift creatr Acl rule obj returning - ", rv))
-	return true, nil
+	return rv, err
 
 }
 
 func (svcHdlr AsicDaemonServiceHandler) CreateAclRuleInternal(aclRuleObj *asicdServices.AclRule, clientInt string) (bool, error) {
-	rv := svcHdlr.pluginMgr.CreateAclRuleConfig(aclRuleObj, clientInt)
+	rv, err := svcHdlr.pluginMgr.CreateAclRuleConfig(aclRuleObj, clientInt)
 	svcHdlr.logger.Debug(fmt.Sprintln("Thrift creatr Acl rule obj returning - ", rv))
-	return true, nil
+	return rv, err
 
 }
 
 func (svcHdlr AsicDaemonServiceHandler) DeleteAclRule(aclRuleObj *asicdServices.AclRule) (bool, error) {
 	svcHdlr.logger.Debug(fmt.Sprintln("Thrift request received to delete acl rule Obj - ", aclRuleObj))
-	//rv, err := svcHdlr.pluginMgr.DeleteAclRuleConfig(aclRuleObj)
-	svcHdlr.logger.Debug(fmt.Sprintln("Thrift delete acl rule object - "))
-	return true, nil
+	rv, err := svcHdlr.pluginMgr.DeleteAclRule(aclRuleObj)
+	svcHdlr.logger.Debug(fmt.Sprintln("Thrift delete acl rule object - ", rv))
+	return rv, err
 
 }
 
 func (svcHdlr AsicDaemonServiceHandler) UpdateAclRule(oldAclRuleObj, newAclRuleObj *asicdServices.AclRule, attrset []bool, op []*asicdServices.PatchOpInfo) (bool, error) {
 	svcHdlr.logger.Debug(fmt.Sprintln("Received thrift request to update acl rule config : old, new -", oldAclRuleObj, newAclRuleObj))
-	//rv, err := svcHdlr.pluginMgr.UpdateAclConfig(oldAclRuleObj, newAclRuleObj, attrset)
+	rv, err := svcHdlr.pluginMgr.UpdateAclRuleConfig(oldAclRuleObj, newAclRuleObj, attrset)
 	svcHdlr.logger.Debug(fmt.Sprintln("Thrift update acl rule call returning -"))
-	return true, nil
+	return rv, err
 
 }
 

@@ -1,10 +1,10 @@
 {
   "IfNamePrefix": {
-    "fpPort": "all"
+    "Ethernet": "all"
   },
-  "SysRsvdVlanRange": "3050-4050",
+  "SysRsvdVlanRange": "3050-4093",
   "PluginList": [
-    "opennsl",
+    "sai",
     "linux"
   ],
   "SwitchMac": "00:11:22:33:44:55",

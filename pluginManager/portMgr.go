@@ -357,13 +357,13 @@ func (pMgr *PortManager) ErrorDisablePort(ifIndex int32, adminState string, ErrD
 
 func (pMgr *PortManager) NotifyMtuChange(ifIndexList []int32, newMtu int32) {
 	for _, ifIndex := range ifIndexList {
-		msg := pluginCommon.PortConfigMtuChangeNotifyMsg{
+		msg := pluginCommon.PortConfigMtuChgNotifyMsg{
 			IfIndex: ifIndex,
 			Mtu:     newMtu,
 		}
 		msgBuf, err := json.Marshal(msg)
 		if err != nil {
-			PortMgr.logger.Err("Error in marshalling Json, in PortConfigMtuChangeNotifyMsg")
+			PortMgr.logger.Err("Error in marshalling Json, in PortConfigMtuChgNotifyMsg")
 		}
 		notification := pluginCommon.AsicdNotification{
 			MsgType: uint8(pluginCommon.NOTIFY_PORT_CONFIG_MTU_CHANGE),
@@ -371,7 +371,7 @@ func (pMgr *PortManager) NotifyMtuChange(ifIndexList []int32, newMtu int32) {
 		}
 		notificationBuf, err := json.Marshal(notification)
 		if err != nil {
-			PortMgr.logger.Err("Failed to marshal PortConfigMtuChangeNotifyMsg")
+			PortMgr.logger.Err("Failed to marshal PortConfigMtuChgNotifyMsg")
 		}
 		PortMgr.notifyChannel <- notificationBuf
 	}
@@ -911,7 +911,7 @@ func linkStateChngHandler(ifIndex, portNum, speed int32, duplexType, operState s
 	//Notify protocol daemons of link state change
 	NotifyLinkStateChange(ifIndex, uint8(state))
 	PortMgr.portUpdateMutex.Unlock()
-	PortMgr.logger.Info("Sent notification for port link state change - ", ifIndex, operState, speed)
+	PortMgr.logger.Info("Sent notification for port link state change - ifIndex: ", ifIndex, operState, speed)
 	PortMgr.dbMutex.Lock()
 	PortMgr.portConfigDB[ifIndex].Duplex = duplexType
 	PortMgr.portConfigDB[ifIndex].Speed = speed

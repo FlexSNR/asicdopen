@@ -61,6 +61,7 @@ const (
 	NOTIFY_VTEP_CREATE               = pluginCommon.NOTIFY_VTEP_CREATE
 	NOTIFY_VTEP_DELETE               = pluginCommon.NOTIFY_VTEP_DELETE
 	NOTIFY_PORT_CONFIG_MODE_CHANGE   = pluginCommon.NOTIFY_PORT_CONFIG_MODE_CHANGE
+	NOTIFY_PORT_ATTR_CHANGE          = pluginCommon.NOTIFY_PORT_ATTR_CHANGE
 	NOTIFY_PORT_CONFIG_MTU_CHANGE    = pluginCommon.NOTIFY_PORT_CONFIG_MTU_CHANGE
 	INTF_STATE_UP                    = pluginCommon.INTF_STATE_UP
 	INTF_STATE_DOWN                  = pluginCommon.INTF_STATE_DOWN
@@ -99,4 +100,5 @@ type IPv4RouteAddDelFailNotifyMsg struct {
 }
 type VtepNotifyMsg pluginCommon.VtepNotifyMsg
 type PortConfigModeChgNotifyMsg pluginCommon.PortConfigModeChgNotifyMsg
-type PortConfigMtuChgNotigyMsg pluginCommon.PortConfigMtuChangeNotifyMsg
+type PortAttrChangeNotifyMsg pluginCommon.PortAttrChangeNotifyMsg
+type PortConfigMtuChgNotifyMsg pluginCommon.PortConfigMtuChgNotifyMsg

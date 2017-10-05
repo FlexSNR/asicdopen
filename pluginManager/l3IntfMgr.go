@@ -223,8 +223,8 @@ func (iMgr *L3IntfManager) DeInitIPIntf(plugin PluginIntf) {
 	var ip6Obj IPIntf
 	ip4Obj = &IPv4IntfObj{}
 	ip6Obj = &IPv6IntfObj{}
-	
-        ip4Obj.DeInit(plugin)
+
+	ip4Obj.DeInit(plugin)
 	ip6Obj.DeInit(plugin)
 
 	for _, info := range iMgr.SubIPv4IntfDB {
@@ -431,7 +431,12 @@ func CreateIPIntfInternal(ipInfo *pluginCommon.PluginIPInfo) (bool, error) {
 	if ipInfo.AdminState == pluginCommon.INTF_STATE_UP {
 		for _, plugin := range L3IntfMgr.plugins {
 			if l2RefType == commonDefs.IfTypeLoopback && isPluginAsicDriver(plugin) {
-				L3IntfMgr.logger.Info("dont call asicd to configure ip address on a loopback intf")
+				//(Original)Snaproute: dont call asicd to add ipv4 on a loopback intf
+				//(Modify)Create loopback interface to install a route (trap)
+				rv := plugin.CreateIPIntfLoopback(ipInfo)
+				if rv < 0 {
+					return false, errors.New(":Plugin Failed to create IPIntf for loopback")
+				}
 				continue
 			}
 			rv := plugin.CreateIPIntf(ipInfo)
@@ -653,7 +658,12 @@ func (iMgr *L3IntfManager) DeleteIPIntf(ipAddr, intfRef string) (bool, error) {
 		// Call all plugins and delete IP Interface
 		for _, plugin := range iMgr.plugins {
 			if l2RefType == commonDefs.IfTypeLoopback && isPluginAsicDriver(plugin) {
-				L3IntfMgr.logger.Info("dont call asicd to delete ipv4 on a loopback intf")
+				//(Original)Snaproute: dont call asicd to delete ipv4 on a loopback intf
+				//(Modify)Remove loopback interface
+				rv := plugin.DeleteIPIntfLoopback(ipInfo)
+				if rv < 0 {
+					return false, errors.New("Plugin failed to delete loopback IP interface")
+				}
 				continue
 			}
 			rv := plugin.DeleteIPIntf(ipInfo)
@@ -677,7 +687,7 @@ func (iMgr *L3IntfManager) DeleteIPIntf(ipAddr, intfRef string) (bool, error) {
 	//and update sw state also and send out notifications
 	if ipInfo.RefCount == 0 {
 		switch l2RefType {
-		case commonDefs.IfTypePort, commonDefs.IfTypeLag:
+		case commonDefs.IfTypePort:
 			vid, _, _ := iMgr.vlanMgr.DeleteVlan(&asicdServices.Vlan{
 				VlanId:        pluginCommon.SYS_RSVD_VLAN,
 				IntfList:      []string{""},

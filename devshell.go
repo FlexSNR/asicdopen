@@ -31,8 +31,9 @@ import (
 	"syscall"
 )
 
-func writer(ch chan<- int, conn *net.TCPConn, writeToDevShell *os.File) {
+func writer(ch chan<- int, conn *net.TCPConn, writeToDevShell *os.File, devShellNewStdout *os.File) {
 	var buf []byte = make([]byte, 256)
+	endToken := []byte{0x4}
 	for {
 		//Read input from tcp connection
 		numBytes, err := conn.Read(buf)
@@ -50,18 +51,25 @@ func writer(ch chan<- int, conn *net.TCPConn, writeToDevShell *os.File) {
 			logger.Err("Failed to send command to driver shell")
 		}
 	}
+	// Send connection end token
+	devShellNewStdout.Write(endToken)
 	//Signal exit
 	ch <- 1
 	return
 }
 
 func reader(conn *net.TCPConn, readFromDevShell *os.File) {
-	var buf []byte = make([]byte, 256)
+	var buf []byte = make([]byte, 1024)
+	endToken := []byte{0x4}
 	for {
 		//Read output from dev shell
 		numBytes, err := readFromDevShell.Read(buf)
 		if err != nil {
 			logger.Err("Failed to read response from driver shell")
+		}
+		// Connection lost, quit
+		if numBytes == 1 && endToken[0] == buf[0] {
+			break
 		}
 		//Write to tcp connection
 		_, err = conn.Write(buf[:numBytes])
@@ -113,7 +121,7 @@ func DevShell(pluginMgr *pluginManager.PluginManager) {
 		if err != nil {
 			logger.Err("Failed to accept TCP connection")
 		}
-		go writer(ch, conn, writeToDevShell)
+		go writer(ch, conn, writeToDevShell, devShellNewStdout)
 		go reader(conn, readFromDevShell)
 		//Read from channel should block until connection is lost
 		_ = <-ch
