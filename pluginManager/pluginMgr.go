@@ -25,7 +25,7 @@ package pluginManager
 
 import (
 	//"asicd/pluginManager/bcmsdk"
-	"asicd/pluginManager/opennsl"
+	//"asicd/pluginManager/opennsl"
 	"asicd/pluginManager/pluginCommon"
 	"asicd/pluginManager/sai"
 	"asicd/pluginManager/softSwitch"
@@ -195,27 +195,29 @@ func NewPluginMgr(pluginList []string, logger *logging.Writer, notifyChannel *pu
 	for _, plugin := range pluginList {
 		if plugin == "opennsl" {
 			//Instantiate opennsl plugin
-			opennslPlugin := opennsl.NewOpenNslPlugin(
-				logger,
-				notifyChannel.All,
-				ProcessLinkStateChange,
-				InitPortConfigDB,
-				InitPortStateDB,
-				UpdatePortStateDB,
-				UpdateLagDB,
-				UpdateIPNeighborDB,
-				UpdateIPv4RouteDB,
-				UpdateIPv4NextHopDB,
-				UpdateIPv4NextHopGroupDB,
-				UpdateMacDB,
-				InitBufferPortStateDB,
-				UpdateBufferPortStateDB,
-				InitBufferGlobalStateDB,
-				UpdateBufferGlobalStateDB,
-				UpdateCoppStatStateDB,
-				UpdateAclStateDB,
-			)
-			pluginMgr.plugins = append(pluginMgr.plugins, opennslPlugin)
+			/*
+				opennslPlugin := opennsl.NewOpenNslPlugin(
+					logger,
+					notifyChannel.All,
+					ProcessLinkStateChange,
+					InitPortConfigDB,
+					InitPortStateDB,
+					UpdatePortStateDB,
+					UpdateLagDB,
+					UpdateIPNeighborDB,
+					UpdateIPv4RouteDB,
+					UpdateIPv4NextHopDB,
+					UpdateIPv4NextHopGroupDB,
+					UpdateMacDB,
+					InitBufferPortStateDB,
+					UpdateBufferPortStateDB,
+					InitBufferGlobalStateDB,
+					UpdateBufferGlobalStateDB,
+					UpdateCoppStatStateDB,
+					UpdateAclStateDB,
+				)
+				pluginMgr.plugins = append(pluginMgr.plugins, opennslPlugin)
+			*/
 		} else if plugin == "sai" {
 			//Instantiate sai plugin
 			saiPlugin := sai.NewSaiPlugin(
@@ -379,7 +381,13 @@ func isControllingPlugin(plugin PluginIntf) bool {
 	switch plugin.(type) {
 	/*
 		case *bcmsdk.BcmSdkPlugin:
-			if controllingPlugin == "bcmsdk" {
+				if controllingPlugin == "bcmsdk" {
+					return true
+				} else {
+					return false
+				}
+		case *opennsl.OpenNslPlugin:
+			if controllingPlugin == "opennsl" {
 				return true
 			} else {
 				return false
@@ -387,12 +395,6 @@ func isControllingPlugin(plugin PluginIntf) bool {
 	*/
 	case *sai.SaiPlugin:
 		if controllingPlugin == "sai" {
-			return true
-		} else {
-			return false
-		}
-	case *opennsl.OpenNslPlugin:
-		if controllingPlugin == "opennsl" {
 			return true
 		} else {
 			return false
@@ -411,7 +413,7 @@ func isControllingPlugin(plugin PluginIntf) bool {
 func isPluginAsicDriver(plugin PluginIntf) bool {
 	switch plugin.(type) {
 	//case *sai.SaiPlugin, *opennsl.OpenNslPlugin, *bcmsdk.BcmSdkPlugin:
-	case *opennsl.OpenNslPlugin, *sai.SaiPlugin:
+	case *sai.SaiPlugin:
 		return true
 	default:
 		return false
